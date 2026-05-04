@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+*.log
+.turbo/
+.cache/
+coverage/
+.DS_Store
+*.pem
+nginx/ssl/*.crt
+nginx/ssl/*.key
+packages/web/dist/
+packages/api/dist/

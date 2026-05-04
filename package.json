@@ -1,0 +1,36 @@
+{
+  "name": "nexrad",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Modern open-source RADIUS management platform",
+  "scripts": {
+    "dev": "pnpm --parallel -r dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "lint:fix": "pnpm -r lint:fix",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "test:ci": "pnpm -r test:ci",
+    "format": "prettier --write \"**/*.{ts,tsx,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,json,md}\"",
+    "prepare": "husky",
+    "docker:dev": "docker compose up --build",
+    "docker:down": "docker compose down",
+    "migrate": "bash scripts/migrate.sh",
+    "clean": "pnpm -r exec rm -rf node_modules dist .turbo"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^15.3.0",
+    "prettier": "^3.4.2",
+    "turbo": "^2.3.3"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": ["eslint --fix", "prettier --write"],
+    "*.{json,md,yaml,yml}": ["prettier --write"]
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  }
+}
