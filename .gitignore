@@ -13,3 +13,4 @@ nginx/ssl/*.crt
 nginx/ssl/*.key
 packages/web/dist/
 packages/api/dist/
+ci error

@@ -5,7 +5,7 @@ import helmet from '@fastify/helmet'
 import rateLimit from '@fastify/rate-limit'
 import { config } from './config.js'
 import { pool } from './db/mysql.js'
-import { redis } from './db/redis.js'
+import { redis, connectRedis } from './db/redis.js'
 import { authRoutes } from './routes/auth.js'
 import { organizationRoutes } from './routes/organizations.js'
 import { statsRoutes } from './modules/stats/stats.routes.js'
@@ -22,6 +22,8 @@ import { apikeyRoutes } from './modules/apikeys/apikey.routes.js'
 import { publicApiRoutes } from './modules/public/public.routes.js'
 
 export async function buildApp() {
+  await connectRedis()
+
   const app = Fastify({
     logger: config.nodeEnv !== 'test',
     trustProxy: true,

@@ -14,11 +14,24 @@ export async function setup() {
     multipleStatements: true,
   })
 
-  const migrations = ['001_freeradius_compat.sql', '002_nexrad_tables.sql']
+  const migrations = [
+    '001_freeradius_compat.sql',
+    '002_nexrad_tables.sql',
+    '003_performance_indexes.sql',
+    '004_branch_provisioning.sql',
+  ]
   for (const file of migrations) {
     const sql = readFileSync(resolve(migrationsDir, file), 'utf-8')
     await conn.query(sql)
   }
+
+  // Seed test org-admin user: username=admin, password=admin123, org_id=1, role=orgadmin
+  await conn.query(`
+    INSERT IGNORE INTO nx_users (id, org_id, username, email, password, role)
+    VALUES (2, 1, 'admin', 'admin@nexrad-test.io',
+      '$2b$12$1Vgb8jO2O14Uowto2ooMzeTeNS6mSpAPnH4ehGusiel5T1TWcWZIS',
+      'orgadmin')
+  `)
 
   await conn.end()
 }

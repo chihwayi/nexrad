@@ -14,7 +14,7 @@ describe('Multi-tenant isolation', () => {
     const adminRes = await app.inject({
       method: 'POST',
       url: '/api/auth/login',
-      body: { username: 'admin', password: 'admin123' },
+      body: { username: 'superadmin', password: 'admin123' },
     })
     adminToken = adminRes.json().accessToken
 
