@@ -152,7 +152,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build API image
-        run: docker build packages/api -t nexrad-api:ci
+        run: docker build -f packages/api/Dockerfile . -t nexrad-api:ci
 
       - name: Build Web image
-        run: docker build packages/web -t nexrad-web:ci
+        run: docker build -f packages/web/Dockerfile . -t nexrad-web:ci
