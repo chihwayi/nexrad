@@ -1,4 +1,5 @@
 # NexRAD — Modern RADIUS Management Platform
+
 > A full-featured, open-source competitor to daloRADIUS built on a modern tech stack.
 > Working project name: **NexRAD** (subject to change)
 
@@ -11,6 +12,7 @@ a FreeRADIUS-based hotspot network for **ZimSmart Villages** — a multi-branch 
 deployment in Zimbabwe using WireGuard VPN, FreeRADIUS 3.2.5, and MySQL 8.
 
 The pain points with daloRADIUS that drove this:
+
 - No mobile support
 - Full page reloads for "live" monitoring
 - No branch-aware access control
@@ -27,6 +29,7 @@ The pain points with daloRADIUS that drove this:
 **Self-hostable, Docker-deployable, open-source FreeRADIUS management portal.**
 
 Three target use cases:
+
 1. Internal use — single deployment, own ops team
 2. Self-hosted — any hotspot operator deploys their own instance
 3. SaaS / white-label — multi-tenant, multiple organizations on one instance
@@ -37,20 +40,20 @@ Beats daloRADIUS on: UI, real-time, mobile, roles, API, WireGuard, Docker.
 
 ## Tech Stack — Decided
 
-| Layer | Choice | Reason |
-|---|---|---|
-| Frontend | React 18 + TypeScript | Component model, huge ecosystem |
-| UI Components | shadcn/ui + Tailwind CSS | Production-quality, unstyled primitives |
-| Backend | Node.js + Fastify + TypeScript | Async I/O, fast, great for WebSocket |
-| Real-time | Socket.io | Live sessions without page reload |
-| Primary DB | MySQL 8 | FreeRADIUS uses it — zero migration friction |
-| Cache / Sessions | Redis | Live stat caching, JWT store, pub/sub |
-| Auth | JWT + refresh tokens + RBAC | Stateless, multi-role |
-| PDF / Vouchers | pdf-lib or Puppeteer | Server-side voucher PDF generation |
-| WireGuard | wg CLI + JSON parsing | Peer management from the UI |
-| Monorepo | pnpm workspaces | Single repo, shared types between api/web |
-| Deployment | Docker + Docker Compose | One-command install on any VPS |
-| CI/CD | GitHub Actions | Auto-build, test, Docker publish |
+| Layer            | Choice                         | Reason                                       |
+| ---------------- | ------------------------------ | -------------------------------------------- |
+| Frontend         | React 18 + TypeScript          | Component model, huge ecosystem              |
+| UI Components    | shadcn/ui + Tailwind CSS       | Production-quality, unstyled primitives      |
+| Backend          | Node.js + Fastify + TypeScript | Async I/O, fast, great for WebSocket         |
+| Real-time        | Socket.io                      | Live sessions without page reload            |
+| Primary DB       | MySQL 8                        | FreeRADIUS uses it — zero migration friction |
+| Cache / Sessions | Redis                          | Live stat caching, JWT store, pub/sub        |
+| Auth             | JWT + refresh tokens + RBAC    | Stateless, multi-role                        |
+| PDF / Vouchers   | pdf-lib or Puppeteer           | Server-side voucher PDF generation           |
+| WireGuard        | wg CLI + JSON parsing          | Peer management from the UI                  |
+| Monorepo         | pnpm workspaces                | Single repo, shared types between api/web    |
+| Deployment       | Docker + Docker Compose        | One-command install on any VPS               |
+| CI/CD            | GitHub Actions                 | Auto-build, test, Docker publish             |
 
 ---
 
@@ -392,6 +395,7 @@ subscribe:global                     ← subscribe to all-branch events
 ## Feature Roadmap
 
 ### Phase 1 — Foundation (MVP)
+
 - [ ] Monorepo scaffolding (pnpm + Docker)
 - [ ] MySQL schema migrations
 - [ ] Auth system (login, JWT, refresh, RBAC middleware)
@@ -402,6 +406,7 @@ subscribe:global                     ← subscribe to all-branch events
 - [ ] Basic branch management (list, status)
 
 ### Phase 2 — Branch-Aware
+
 - [ ] Per-branch operator logins (scoped access)
 - [ ] Branch detail view (live sessions, tokens, revenue)
 - [ ] WireGuard peer management UI
@@ -409,6 +414,7 @@ subscribe:global                     ← subscribe to all-branch events
 - [ ] Per-branch revenue reports
 
 ### Phase 3 — Product Polish
+
 - [ ] Multi-tenant (nx_organizations)
 - [ ] Audit log viewer
 - [ ] Token expiry system + alerts
@@ -419,6 +425,7 @@ subscribe:global                     ← subscribe to all-branch events
 - [ ] Mobile PWA
 
 ### Phase 4 — Platform
+
 - [ ] REST API with API key auth (for external integrations)
 - [ ] Webhook support (token used, session started)
 - [ ] Plugin system
@@ -433,6 +440,7 @@ subscribe:global                     ← subscribe to all-branch events
 NexRAD does NOT replace FreeRADIUS. It manages it.
 
 FreeRADIUS tables used (read/write):
+
 - `radcheck` — token credentials (username + password)
 - `radreply` — session attributes (time limit, data limit)
 - `radusergroup` — group assignments
@@ -455,7 +463,7 @@ FreeRADIUS config files remain untouched by the portal except for NAS management
 services:
   api:
     build: ./packages/api
-    ports: ["3000:3000"]
+    ports: ['3000:3000']
     environment:
       DATABASE_URL: mysql://radius:password@mysql:3306/radius
       REDIS_URL: redis://redis:6379
@@ -464,7 +472,7 @@ services:
 
   web:
     build: ./packages/web
-    ports: ["5173:5173"]
+    ports: ['5173:5173']
     environment:
       VITE_API_URL: http://localhost:3000
 
@@ -498,6 +506,7 @@ Production adds: nginx reverse proxy, SSL (Let's Encrypt), resource limits.
 The ZimSmart Villages deployment (173.212.195.88) will be the first real-world test.
 
 Current setup:
+
 - FreeRADIUS 3.2.5 + MySQL 8.0.45
 - WireGuard VPN: server 10.8.0.1, branches 10.8.0.11–10.8.0.16
 - 6 branches (Branch01–Branch06), Branch04 active
@@ -512,7 +521,7 @@ NexRAD will be installed alongside existing daloRADIUS, connecting to the same M
 ## Key Design Decisions
 
 1. **MySQL-first, not PostgreSQL** — FreeRADIUS ecosystem is MySQL. Migration friction would kill adoption.
-2. **No ORM for FreeRADIUS tables** — raw SQL for radcheck/radacct/nas to stay exactly compatible. ORM only for nx_* tables.
+2. **No ORM for FreeRADIUS tables** — raw SQL for radcheck/radacct/nas to stay exactly compatible. ORM only for nx\_\* tables.
 3. **WebSocket for live data** — never meta refresh. Socket.io with Redis pub/sub for horizontal scaling.
 4. **Scope enforcement in middleware** — every route automatically filters by org_id + branch, not per-query. One missed WHERE clause shouldn't leak data.
 5. **FreeRADIUS daemon untouched** — NexRAD only reads/writes the database. No touching config files or restarting the daemon (except NAS reloads via `radmin`).
@@ -606,6 +615,7 @@ PersistentKeepalive = 25
 NexRAD manages all of this from a UI. No more `nano wg0.conf` and manually editing files.
 
 **Adding a new branch from the UI:**
+
 1. Admin clicks "Add Branch" → fills in name and location
 2. NexRAD generates a WireGuard keypair server-side (or accepts pasted public key)
 3. Assigns the next available tunnel IP (10.8.0.17, 10.8.0.18 etc.)
@@ -636,17 +646,18 @@ The branch operator **only needs to paste this config into their router or scan 
 
 ### Supported connection types
 
-| Connection Type | Works? | Notes |
-|---|---|---|
-| Static IP (fiber, dedicated) | ✓ | Endpoint can be set if desired |
-| Starlink (dynamic IP) | ✓ | PersistentKeepalive handles reconnects |
-| Mobile data (CGNAT) | ✓ | Outbound-only tunnel, no port-forward needed |
-| Shared ADSL (dynamic) | ✓ | Same as Starlink |
-| Double-NAT | ✓ | As long as outbound UDP 51820 is not blocked |
+| Connection Type              | Works? | Notes                                        |
+| ---------------------------- | ------ | -------------------------------------------- |
+| Static IP (fiber, dedicated) | ✓      | Endpoint can be set if desired               |
+| Starlink (dynamic IP)        | ✓      | PersistentKeepalive handles reconnects       |
+| Mobile data (CGNAT)          | ✓      | Outbound-only tunnel, no port-forward needed |
+| Shared ADSL (dynamic)        | ✓      | Same as Starlink                             |
+| Double-NAT                   | ✓      | As long as outbound UDP 51820 is not blocked |
 
 ### WireGuard monitoring in NexRAD
 
 NexRAD reads `wg show wg0 dump` and parses:
+
 - `latest-handshake` timestamp → branch online/offline status
 - `transfer-rx / transfer-tx` → data through the tunnel
 - `endpoint` → current public IP of the branch (informational)
@@ -672,12 +683,14 @@ This is a core design constraint, not an afterthought. Every feature must pass t
 ### The two user types
 
 **Type A — HQ Admin (technical, you)**
+
 - Sets up the server once
 - Manages billing plans, commission rates, branches
 - Reviews financial reports
 - Adds new branches (click, fill form, scan QR)
 
 **Type B — Branch Operator (non-technical, at the branch)**
+
 - Logs in on their phone
 - Generates 20 tokens for today
 - Prints vouchers (or screenshots them)
@@ -736,6 +749,7 @@ Everything else (prefix, batch tracking, expiry) is hidden behind "Advanced" —
 > "Works with Starlink. Works with mobile data. Works with any internet — even dynamic IPs. No port forwarding. No static IP required. Just point, connect, go."
 
 This is a genuine differentiator in the African market where:
+
 - Fiber with static IP is expensive and unavailable outside major cities
 - Starlink is exploding across rural Africa (Zimbabwe, Zambia, Mozambique, etc.)
 - Mobile data hotspot routers are common at smaller branches
@@ -745,14 +759,14 @@ NexRAD is the first RADIUS management system built with dynamic-IP branches as t
 
 **Competitor comparison on this point:**
 
-| Feature | daloRADIUS | NexRAD |
-|---|---|---|
-| WireGuard support | None | Built-in |
-| Dynamic IP branches | Manual config | Automatic |
-| Starlink compatible | No (no WireGuard) | Yes, natively |
-| Add branch from UI | No | Yes, with QR |
-| Branch online/offline | No | Real-time |
-| Works with mobile data | No | Yes |
+| Feature                | daloRADIUS        | NexRAD        |
+| ---------------------- | ----------------- | ------------- |
+| WireGuard support      | None              | Built-in      |
+| Dynamic IP branches    | Manual config     | Automatic     |
+| Starlink compatible    | No (no WireGuard) | Yes, natively |
+| Add branch from UI     | No                | Yes, with QR  |
+| Branch online/offline  | No                | Real-time     |
+| Works with mobile data | No                | Yes           |
 
 ---
 
@@ -766,6 +780,6 @@ NexRAD is the first RADIUS management system built with dynamic-IP branches as t
 
 ---
 
-*Document created: 2026-05-04*
-*Author: Ignatious Chihwayi + Claude*
-*Status: Pre-development — architecture phase*
+_Document created: 2026-05-04_
+_Author: Ignatious Chihwayi + Claude_
+_Status: Pre-development — architecture phase_

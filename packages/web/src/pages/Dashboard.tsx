@@ -27,10 +27,10 @@ export default function Dashboard() {
       />
 
       <div className="kpi-grid">
-        <StatCard label="Live Sessions"    value={0}  colour="green"  icon={Activity}    sub="Right now" />
-        <StatCard label="Active Branches"  value={0}  colour="blue"   icon={Wifi}        sub="Online" />
-        <StatCard label="Tokens Used"      value={0}  colour="purple" icon={Ticket}      sub="This month" />
-        <StatCard label="Realized Revenue" value="$0" colour="green"  icon={DollarSign}  sub="USD" />
+        <StatCard label="Live Sessions" value={0} colour="green" icon={Activity} sub="Right now" />
+        <StatCard label="Active Branches" value={0} colour="blue" icon={Wifi} sub="Online" />
+        <StatCard label="Tokens Used" value={0} colour="purple" icon={Ticket} sub="This month" />
+        <StatCard label="Realized Revenue" value="$0" colour="green" icon={DollarSign} sub="USD" />
       </div>
     </div>
   )

@@ -3,41 +3,49 @@ import { useAuth } from '@/stores/auth.store'
 import { useUi } from '@/stores/ui.store'
 import { cn } from '@/lib/utils'
 import {
-  LayoutDashboard, GitBranch, Ticket, Activity,
-  BarChart2, Package, Users, Shield, Settings,
-  LogOut, ChevronLeft, Network, FileText,
+  LayoutDashboard,
+  GitBranch,
+  Ticket,
+  Activity,
+  BarChart2,
+  Package,
+  Users,
+  Shield,
+  Settings,
+  LogOut,
+  ChevronLeft,
+  Network,
+  FileText,
 } from 'lucide-react'
-import {
-  Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
-} from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 interface NavItem {
-  href:            string
-  label:           string
-  icon:            React.ElementType
+  href: string
+  label: string
+  icon: React.ElementType
   superadminOnly?: boolean
 }
 
 const navItems: NavItem[] = [
-  { href: '/dashboard',     label: 'Dashboard',     icon: LayoutDashboard },
-  { href: '/sessions',      label: 'Live Sessions', icon: Activity },
-  { href: '/branches',      label: 'Branches',      icon: GitBranch },
-  { href: '/tokens',        label: 'Tokens',        icon: Ticket },
-  { href: '/reports',       label: 'Reports',       icon: BarChart2 },
-  { href: '/plans',         label: 'Plans',         icon: Package },
-  { href: '/wireguard',     label: 'WireGuard',     icon: Network },
-  { href: '/audit',         label: 'Audit Log',     icon: FileText },
-  { href: '/users',         label: 'Users',         icon: Users },
-  { href: '/organizations', label: 'Orgs',          icon: Shield, superadminOnly: true },
-  { href: '/settings',      label: 'Settings',      icon: Settings },
+  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/sessions', label: 'Live Sessions', icon: Activity },
+  { href: '/branches', label: 'Branches', icon: GitBranch },
+  { href: '/tokens', label: 'Tokens', icon: Ticket },
+  { href: '/reports', label: 'Reports', icon: BarChart2 },
+  { href: '/plans', label: 'Plans', icon: Package },
+  { href: '/wireguard', label: 'WireGuard', icon: Network },
+  { href: '/audit', label: 'Audit Log', icon: FileText },
+  { href: '/users', label: 'Users', icon: Users },
+  { href: '/organizations', label: 'Orgs', icon: Shield, superadminOnly: true },
+  { href: '/settings', label: 'Settings', icon: Settings },
 ]
 
 const roleLabel: Record<string, string> = {
-  superadmin:    'Super Admin',
-  orgadmin:      'Org Admin',
+  superadmin: 'Super Admin',
+  orgadmin: 'Org Admin',
   branchmanager: 'Branch Mgr',
-  operator:      'Operator',
-  readonly:      'Read Only',
+  operator: 'Operator',
+  readonly: 'Read Only',
 }
 
 // Separate helpers so NavLink's className fn is never inside a Tooltip asChild
@@ -46,13 +54,15 @@ function NavItemOpen({ href, label, icon: Icon, onClick }: NavItem & { onClick: 
     <NavLink
       to={href}
       onClick={onClick}
-      className={({ isActive }) => cn(
-        'flex flex-row items-center gap-3 rounded-lg px-3 py-2 w-full',
-        'text-sm font-medium transition-colors duration-150',
-        'text-[hsl(var(--sidebar-fg)/0.65)]',
-        'hover:bg-[hsl(var(--sidebar-item-hover))] hover:text-[hsl(var(--sidebar-fg))]',
-        isActive && 'bg-[hsl(var(--sidebar-accent)/0.15)] !text-[hsl(var(--sidebar-accent))]'
-      )}
+      className={({ isActive }) =>
+        cn(
+          'flex flex-row items-center gap-3 rounded-lg px-3 py-2 w-full',
+          'text-sm font-medium transition-colors duration-150',
+          'text-[hsl(var(--sidebar-fg)/0.65)]',
+          'hover:bg-[hsl(var(--sidebar-item-hover))] hover:text-[hsl(var(--sidebar-fg))]',
+          isActive && 'bg-[hsl(var(--sidebar-accent)/0.15)] !text-[hsl(var(--sidebar-accent))]'
+        )
+      }
     >
       <Icon size={18} className="flex-shrink-0" />
       <span className="truncate leading-none">{label}</span>
@@ -68,12 +78,14 @@ function NavItemCollapsed({ href, label, icon: Icon, onClick }: NavItem & { onCl
         <NavLink
           to={href}
           onClick={onClick}
-          className={({ isActive }) => cn(
-            'flex items-center justify-center rounded-lg p-2.5 w-full',
-            'text-[hsl(var(--sidebar-fg)/0.65)] transition-colors duration-150',
-            'hover:bg-[hsl(var(--sidebar-item-hover))] hover:text-[hsl(var(--sidebar-fg))]',
-            isActive && 'bg-[hsl(var(--sidebar-accent)/0.15)] !text-[hsl(var(--sidebar-accent))]'
-          )}
+          className={({ isActive }) =>
+            cn(
+              'flex items-center justify-center rounded-lg p-2.5 w-full',
+              'text-[hsl(var(--sidebar-fg)/0.65)] transition-colors duration-150',
+              'hover:bg-[hsl(var(--sidebar-item-hover))] hover:text-[hsl(var(--sidebar-fg))]',
+              isActive && 'bg-[hsl(var(--sidebar-accent)/0.15)] !text-[hsl(var(--sidebar-accent))]'
+            )
+          }
         >
           <Icon size={18} />
         </NavLink>
@@ -90,9 +102,7 @@ export function Sidebar() {
   const { sidebarOpen, toggleSidebar, setSidebarOpen } = useUi()
   const navigate = useNavigate()
 
-  const visible = navItems.filter(
-    (item) => !item.superadminOnly || user?.role === 'superadmin'
-  )
+  const visible = navItems.filter((item) => !item.superadminOnly || user?.role === 'superadmin')
 
   const handleNavClick = () => {
     if (window.innerWidth < 1024) setSidebarOpen(false)
@@ -105,15 +115,14 @@ export function Sidebar() {
 
   return (
     <TooltipProvider delayDuration={300}>
-      <aside className={cn(
-        'fixed inset-y-0 left-0 z-30 flex flex-col',
-        'bg-[hsl(var(--sidebar-bg))] border-r border-[hsl(var(--sidebar-border))]',
-        'transition-all duration-200 ease-out',
-        sidebarOpen
-          ? 'w-[240px] translate-x-0'
-          : '-translate-x-full lg:translate-x-0 lg:w-16'
-      )}>
-
+      <aside
+        className={cn(
+          'fixed inset-y-0 left-0 z-30 flex flex-col',
+          'bg-[hsl(var(--sidebar-bg))] border-r border-[hsl(var(--sidebar-border))]',
+          'transition-all duration-200 ease-out',
+          sidebarOpen ? 'w-[240px] translate-x-0' : '-translate-x-full lg:translate-x-0 lg:w-16'
+        )}
+      >
         {/* ── Logo row ─────────────────────────────────────── */}
         <div className="flex items-center gap-3 px-3 h-14 border-b border-[hsl(var(--sidebar-border))] flex-shrink-0">
           <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center flex-shrink-0 shadow-md">
@@ -122,7 +131,9 @@ export function Sidebar() {
 
           {sidebarOpen && (
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-bold text-[hsl(var(--sidebar-fg))] leading-tight">NexRAD</p>
+              <p className="text-sm font-bold text-[hsl(var(--sidebar-fg))] leading-tight">
+                NexRAD
+              </p>
               <p className="text-[10px] text-[hsl(var(--sidebar-fg)/0.4)] truncate capitalize">
                 {user?.orgSlug ?? 'Platform'}
               </p>
@@ -149,9 +160,11 @@ export function Sidebar() {
         {/* ── Navigation ───────────────────────────────────── */}
         <nav className="flex-1 overflow-y-auto scrollbar-thin py-2 px-2 space-y-0.5">
           {visible.map((item) =>
-            sidebarOpen
-              ? <NavItemOpen    key={item.href} {...item} onClick={handleNavClick} />
-              : <NavItemCollapsed key={item.href} {...item} onClick={handleNavClick} />
+            sidebarOpen ? (
+              <NavItemOpen key={item.href} {...item} onClick={handleNavClick} />
+            ) : (
+              <NavItemCollapsed key={item.href} {...item} onClick={handleNavClick} />
+            )
           )}
         </nav>
 
@@ -207,7 +220,6 @@ export function Sidebar() {
             </div>
           )}
         </div>
-
       </aside>
     </TooltipProvider>
   )

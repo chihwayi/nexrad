@@ -1,8 +1,8 @@
 interface PageHeaderProps {
-  title:     string
+  title: string
   subtitle?: string
-  actions?:  React.ReactNode
-  badge?:    React.ReactNode
+  actions?: React.ReactNode
+  badge?: React.ReactNode
 }
 
 export function PageHeader({ title, subtitle, actions, badge }: PageHeaderProps) {
@@ -15,9 +15,7 @@ export function PageHeader({ title, subtitle, actions, badge }: PageHeaderProps)
         </div>
         {subtitle && <p className="page-subtitle">{subtitle}</p>}
       </div>
-      {actions && (
-        <div className="flex items-center gap-2 flex-shrink-0">{actions}</div>
-      )}
+      {actions && <div className="flex items-center gap-2 flex-shrink-0">{actions}</div>}
     </div>
   )
 }

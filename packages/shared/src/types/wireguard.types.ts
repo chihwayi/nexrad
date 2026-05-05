@@ -23,7 +23,7 @@ export interface WgStatus {
 export interface AddPeerRequest {
   branchName: string
   location?: string
-  publicKey?: string  // if omitted, server generates keypair
+  publicKey?: string // if omitted, server generates keypair
 }
 
 export interface AddPeerResponse {

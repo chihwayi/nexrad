@@ -1,20 +1,20 @@
 import { cn } from '@/lib/utils'
 
 interface Column<T> {
-  key:     keyof T | string
-  header:  string
-  cell?:   (row: T) => React.ReactNode
-  width?:  string
-  align?:  'left' | 'right' | 'center'
-  hide?:   boolean
+  key: keyof T | string
+  header: string
+  cell?: (row: T) => React.ReactNode
+  width?: string
+  align?: 'left' | 'right' | 'center'
+  hide?: boolean
 }
 
 interface DataTableProps<T> {
-  columns:    Column<T>[]
-  data:       T[]
-  loading?:   boolean
+  columns: Column<T>[]
+  data: T[]
+  loading?: boolean
   emptyText?: string
-  rowKey:     (row: T) => string | number
+  rowKey: (row: T) => string | number
   onRowClick?: (row: T) => void
   skeletonRows?: number
 }
@@ -40,7 +40,7 @@ export function DataTable<T>({
                 key={String(col.key)}
                 style={{ width: col.width }}
                 className={cn(
-                  col.align === 'right'  && 'text-right',
+                  col.align === 'right' && 'text-right',
                   col.align === 'center' && 'text-center'
                 )}
               >
@@ -55,17 +55,22 @@ export function DataTable<T>({
               <tr key={i}>
                 {visible.map((col) => (
                   <td key={String(col.key)}>
-                    <div className={cn(
-                      'h-4 bg-muted rounded animate-pulse',
-                      col.align === 'right' ? 'ml-auto w-1/2' : 'w-3/4'
-                    )} />
+                    <div
+                      className={cn(
+                        'h-4 bg-muted rounded animate-pulse',
+                        col.align === 'right' ? 'ml-auto w-1/2' : 'w-3/4'
+                      )}
+                    />
                   </td>
                 ))}
               </tr>
             ))
           ) : data.length === 0 ? (
             <tr>
-              <td colSpan={visible.length} className="py-10 text-center text-sm text-muted-foreground">
+              <td
+                colSpan={visible.length}
+                className="py-10 text-center text-sm text-muted-foreground"
+              >
                 {emptyText}
               </td>
             </tr>
@@ -80,7 +85,7 @@ export function DataTable<T>({
                   <td
                     key={String(col.key)}
                     className={cn(
-                      col.align === 'right'  && 'text-right',
+                      col.align === 'right' && 'text-right',
                       col.align === 'center' && 'text-center'
                     )}
                   >

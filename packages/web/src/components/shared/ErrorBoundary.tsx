@@ -3,13 +3,13 @@ import { AlertTriangle, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 interface Props {
-  children:  ReactNode
+  children: ReactNode
   fallback?: ReactNode
 }
 
 interface State {
   hasError: boolean
-  error:    Error | null
+  error: Error | null
 }
 
 export class ErrorBoundary extends Component<Props, State> {
@@ -35,14 +35,11 @@ export class ErrorBoundary extends Component<Props, State> {
           <div className="space-y-1">
             <h3 className="font-semibold text-lg">Something went wrong</h3>
             <p className="text-sm text-muted-foreground max-w-sm">
-              {this.state.error?.message ?? 'An unexpected error occurred. Try refreshing the page.'}
+              {this.state.error?.message ??
+                'An unexpected error occurred. Try refreshing the page.'}
             </p>
           </div>
-          <Button
-            variant="outline"
-            onClick={() => window.location.reload()}
-            className="gap-2"
-          >
+          <Button variant="outline" onClick={() => window.location.reload()} className="gap-2">
             <RefreshCw size={14} />
             Reload page
           </Button>

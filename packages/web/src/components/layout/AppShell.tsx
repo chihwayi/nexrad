@@ -20,10 +20,12 @@ export default function AppShell() {
       )}
 
       {/* Main content area */}
-      <div className={cn(
-        'flex flex-col flex-1 overflow-hidden transition-all duration-200',
-        sidebarOpen ? 'lg:ml-[240px]' : 'lg:ml-16'
-      )}>
+      <div
+        className={cn(
+          'flex flex-col flex-1 overflow-hidden transition-all duration-200',
+          sidebarOpen ? 'lg:ml-[240px]' : 'lg:ml-16'
+        )}
+      >
         <TopBar />
         <main className="flex-1 overflow-y-auto scrollbar-thin">
           <div className="px-4 py-5 sm:px-6 sm:py-6 max-w-screen-2xl mx-auto animate-fade-in">

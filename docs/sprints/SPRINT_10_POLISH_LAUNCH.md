@@ -1,4 +1,5 @@
 # Sprint 10 — Polish, Security Hardening & Launch Prep
+
 **Duration:** 4 days | **Goal:** Security audit, performance tuning, real app icons, email notifications, error boundaries, SMTP integration, documentation, Docker production hardening, and final launch checklist.
 
 > After this sprint: NexRAD is production-ready. You can deploy it, hand it to real users, and open-source it with confidence.
@@ -6,6 +7,7 @@
 ---
 
 ## Prerequisites
+
 - Sprint 0–9 sign-off checklists all ✓
 - SMTP credentials available (Mailgun, SendGrid, or self-hosted)
 - Production server with Docker Compose
@@ -19,6 +21,7 @@
 Before writing any new code, audit the following:
 
 ### API Security
+
 ```bash
 # Run these checks manually or in CI:
 
@@ -42,17 +45,23 @@ grep -rn "dev-secret\|dev-refresh" packages/api/src/config.ts
 ### Fixes to apply from audit:
 
 #### Add rate limiting to auth routes specifically:
+
 ```typescript
 // In packages/api/src/modules/auth/auth.routes.ts
 // Add tighter rate limit for login endpoint:
-app.post('/auth/login', {
-  config: { rateLimit: { max: 10, timeWindow: '1 minute' } }
-}, async (req, reply) => {
-  // ... existing handler
-})
+app.post(
+  '/auth/login',
+  {
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+  },
+  async (req, reply) => {
+    // ... existing handler
+  }
+)
 ```
 
 #### Add Zod validation to all remaining routes:
+
 ```typescript
 // Any route accepting req.body without Zod parse must be fixed
 // Pattern: const body = SchemaName.parse(req.body)
@@ -60,6 +69,7 @@ app.post('/auth/login', {
 ```
 
 #### Add request ID to all logs:
+
 ```typescript
 // In packages/api/src/app.ts, add to Fastify options:
 const app = Fastify({
@@ -74,11 +84,13 @@ const app = Fastify({
 ## Task 10.2 — SMTP Email Service
 
 ### Install nodemailer types:
+
 ```bash
 cd packages/api && pnpm add -D @types/nodemailer
 ```
 
 ### `packages/api/src/services/email.service.ts`
+
 ```typescript
 import nodemailer from 'nodemailer'
 import { config } from '../config.js'
@@ -91,9 +103,7 @@ function getTransporter() {
       host: config.smtp.host,
       port: config.smtp.port,
       secure: config.smtp.port === 465,
-      auth: config.smtp.user
-        ? { user: config.smtp.user, pass: config.smtp.password }
-        : undefined,
+      auth: config.smtp.user ? { user: config.smtp.user, pass: config.smtp.password } : undefined,
     })
   }
   return transporter
@@ -192,6 +202,7 @@ export async function sendTokenBatchEmail(opts: {
 ```
 
 ### Add SMTP config to `packages/api/src/config.ts`:
+
 ```typescript
 // Add to config object:
 smtp: {
@@ -204,6 +215,7 @@ smtp: {
 ```
 
 ### Add to `.env.example`:
+
 ```
 # SMTP (optional — leave blank to disable email)
 SMTP_HOST=
@@ -218,6 +230,7 @@ SMTP_FROM=noreply@yourdomain.com
 ## Task 10.3 — Frontend Error Boundary
 
 ### `packages/web/src/components/ErrorBoundary.tsx`
+
 ```tsx
 import { Component, type ReactNode } from 'react'
 import { AlertTriangle, RefreshCw } from 'lucide-react'
@@ -281,14 +294,13 @@ export class ErrorBoundary extends Component<Props, State> {
 ```
 
 ### Wrap every page in AppShell with ErrorBoundary:
+
 ```tsx
 // In packages/web/src/components/AppShell.tsx, wrap children:
 import { ErrorBoundary } from './ErrorBoundary'
 
 // Inside the main content area:
-<ErrorBoundary>
-  {children}
-</ErrorBoundary>
+;<ErrorBoundary>{children}</ErrorBoundary>
 ```
 
 ---
@@ -296,6 +308,7 @@ import { ErrorBoundary } from './ErrorBoundary'
 ## Task 10.4 — Loading Skeleton Improvements
 
 ### `packages/web/src/components/PageSkeleton.tsx`
+
 ```tsx
 export function PageSkeleton() {
   return (
@@ -327,6 +340,7 @@ export function PageSkeleton() {
 ```
 
 ### Wrap pages with Suspense fallback — update `packages/web/src/App.tsx`:
+
 ```tsx
 import { Suspense, lazy } from 'react'
 import { PageSkeleton } from './components/PageSkeleton'
@@ -357,6 +371,7 @@ const QuickToken = lazy(() => import('./pages/QuickToken'))
 ## Task 10.5 — Nginx Production Config
 
 ### `docker/nginx/default.conf`
+
 ```nginx
 upstream nexrad_api {
   server api:3000;
@@ -448,6 +463,7 @@ server {
 ## Task 10.6 — Production Docker Compose Finalization
 
 ### Update `docker-compose.prod.yml` — complete version:
+
 ```yaml
 version: '3.9'
 
@@ -468,7 +484,7 @@ services:
       --collation-server=utf8mb4_unicode_ci
       --sql-mode=STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u${DB_USER}", "-p${DB_PASSWORD}"]
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-u${DB_USER}', '-p${DB_PASSWORD}']
       interval: 10s
       timeout: 5s
       retries: 10
@@ -481,7 +497,7 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      test: ['CMD', 'redis-cli', '-a', '${REDIS_PASSWORD}', 'ping']
       interval: 10s
       timeout: 3s
       retries: 5
@@ -524,8 +540,8 @@ services:
     image: nginx:1.25-alpine
     restart: always
     ports:
-      - "80:80"
-      - "443:443"
+      - '80:80'
+      - '443:443'
     volumes:
       - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - /etc/letsencrypt/live/${DOMAIN}/fullchain.pem:/etc/nginx/ssl/fullchain.pem:ro
@@ -549,6 +565,7 @@ volumes:
 ## Task 10.7 — Real App Icons
 
 ### Create proper icons (replace placeholder from Sprint 8):
+
 ```bash
 # Option 1: If you have ImageMagick and a logo SVG:
 # cd packages/web/public/icons
@@ -576,6 +593,7 @@ volumes:
 ## Task 10.8 — DB Index Optimization
 
 ### `packages/api/src/db/migrations/003_performance_indexes.sql`
+
 ```sql
 -- ── Migration 003: Performance Indexes ───────────────────────────────────────
 -- Run AFTER initial data is loaded for best index build performance
@@ -606,6 +624,7 @@ CREATE INDEX IF NOT EXISTS idx_apikey_hash ON nx_api_keys (key_hash(32));
 ```
 
 ### Add to `scripts/migrate.sh`:
+
 ```bash
 mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" \
   < packages/api/src/db/migrations/003_performance_indexes.sql
@@ -616,6 +635,7 @@ mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" \
 ## Task 10.9 — Health Check Improvements
 
 ### Update `packages/api/src/app.ts` — enhanced health endpoint:
+
 ```typescript
 app.get('/health', async (request, reply) => {
   const checks: Record<string, 'ok' | 'error'> = {}
@@ -653,6 +673,7 @@ app.get('/health', async (request, reply) => {
 ## Task 10.10 — Graceful Shutdown
 
 ### Update `packages/api/src/server.ts`:
+
 ```typescript
 async function shutdown(signal: string) {
   console.info(`${signal} received — shutting down gracefully`)
@@ -677,7 +698,8 @@ process.on('SIGINT', () => shutdown('SIGINT'))
 ## Task 10.11 — Final README for Open Source
 
 ### Create `README.md` at repo root:
-```markdown
+
+````markdown
 # NexRAD
 
 **Modern WiFi Management Platform — the open-source daloRADIUS alternative.**
@@ -686,16 +708,16 @@ Manage FreeRADIUS deployments with a modern React UI, real-time dashboards, Wire
 
 ## Why NexRAD?
 
-| Feature | NexRAD | daloRADIUS |
-|---------|--------|-----------|
-| UI | Modern React (dark/light) | PHP/Bootstrap (dated) |
-| Real-time sessions | WebSocket | Page refresh |
-| WireGuard / Starlink | ✅ Built-in | ❌ Manual |
-| Mobile PWA | ✅ Installable | ❌ No |
-| Multi-tenant | ✅ Org isolation | ❌ Single-tenant |
-| REST API | ✅ API keys + scopes | ❌ No |
-| Voucher PDF | ✅ Professional layout | ⚠️ Basic |
-| Commission tracking | ✅ Realized vs generated | ❌ No |
+| Feature              | NexRAD                    | daloRADIUS            |
+| -------------------- | ------------------------- | --------------------- |
+| UI                   | Modern React (dark/light) | PHP/Bootstrap (dated) |
+| Real-time sessions   | WebSocket                 | Page refresh          |
+| WireGuard / Starlink | ✅ Built-in               | ❌ Manual             |
+| Mobile PWA           | ✅ Installable            | ❌ No                 |
+| Multi-tenant         | ✅ Org isolation          | ❌ Single-tenant      |
+| REST API             | ✅ API keys + scopes      | ❌ No                 |
+| Voucher PDF          | ✅ Professional layout    | ⚠️ Basic              |
+| Commission tracking  | ✅ Realized vs generated  | ❌ No                 |
 
 ## Starlink / Dynamic IP Support
 
@@ -704,6 +726,7 @@ NexRAD is built for the real world — branches can use **Starlink, 4G, or any d
 ## Quick Start
 
 ### Prerequisites
+
 - Node.js ≥ 20, pnpm ≥ 9
 - Docker + Docker Compose
 - (Production) WireGuard on server host
@@ -717,6 +740,7 @@ cp .env.example .env
 pnpm install
 pnpm docker:dev
 ```
+````
 
 Open http://localhost:5173 — login with `admin` / `admin123`.
 
@@ -745,7 +769,8 @@ Full architecture: [ARCHITECTURE.md](ARCHITECTURE.md)
 ## License
 
 MIT
-```
+
+````
 
 ---
 
@@ -770,7 +795,7 @@ Point your domain to the server IP, then:
 ```bash
 apt install certbot
 certbot certonly --standalone -d yourdomain.com
-```
+````
 
 Certificates land in `/etc/letsencrypt/live/yourdomain.com/`.
 
@@ -783,6 +808,7 @@ cp .env.example .env
 ```
 
 Edit `.env` — critical values:
+
 - `JWT_SECRET` — random 64-char string (`openssl rand -hex 32`)
 - `REFRESH_TOKEN_SECRET` — different random 64-char string
 - `DB_ROOT_PASSWORD`, `DB_PASSWORD` — strong passwords
@@ -864,7 +890,8 @@ git pull
 docker compose -f docker-compose.prod.yml build --no-cache
 docker compose -f docker-compose.prod.yml up -d
 ```
-```
+
+````
 
 ---
 
@@ -889,7 +916,7 @@ docker compose -f docker-compose.prod.yml up -d
 sleep 10
 curl -f http://localhost/health
 # Expected: {"status":"ok","checks":{"mysql":"ok","redis":"ok"},...}
-```
+````
 
 ---
 
@@ -898,6 +925,7 @@ curl -f http://localhost/health
 Before marking Sprint 10 and the entire project complete, every item must be ✓:
 
 ### Security
+
 - [ ] No raw SQL string concatenation found in audit scan
 - [ ] All routes with `req.body` use Zod validation
 - [ ] Auth rate limit: `/api/auth/login` max 10 req/min enforced (test with curl loop)
@@ -908,6 +936,7 @@ Before marking Sprint 10 and the entire project complete, every item must be ✓
 - [ ] bcrypt cost factor is 12 (verify in user.service.ts and auth.service.ts)
 
 ### Performance
+
 - [ ] `/health` returns `{"mysql":"ok","redis":"ok"}` under 50ms
 - [ ] Dashboard loads in under 2 seconds on 3G (Chrome devtools → Slow 3G)
 - [ ] Bundle size: main JS chunk under 500KB gzipped
@@ -915,6 +944,7 @@ Before marking Sprint 10 and the entire project complete, every item must be ✓
 - [ ] Performance indexes migration (003) applied — EXPLAIN shows index use on radacct
 
 ### Frontend Quality
+
 - [ ] ErrorBoundary wraps all pages — intentionally throw in a page, see error UI not blank white screen
 - [ ] All pages have loading skeleton states — no bare spinners
 - [ ] Lazy loading working — check Network tab for chunk splitting on navigation
@@ -924,6 +954,7 @@ Before marking Sprint 10 and the entire project complete, every item must be ✓
 - [ ] Mobile (375px): Dashboard, Tokens, QuickToken all usable without horizontal scroll
 
 ### PWA
+
 - [ ] Lighthouse PWA score: all checkboxes green (run `npx lighthouse http://localhost:5173 --view`)
 - [ ] Real 192px and 512px icons (not placeholder squares)
 - [ ] Apple touch icon present
@@ -931,12 +962,14 @@ Before marking Sprint 10 and the entire project complete, every item must be ✓
 - [ ] App loads from home screen icon in standalone mode
 
 ### Functionality
+
 - [ ] Full flow: create org → add branch (WireGuard) → create plan → generate tokens → print vouchers → view in reports
 - [ ] Commission math: realized × rate = commission (verify in reports with known data)
 - [ ] Session disconnect marks radacct stopped
 - [ ] API key: generate → use on `/api/v1/tokens` → revoke → verify 401
 
 ### Production
+
 - [ ] `docker compose -f docker-compose.prod.yml up -d` starts all 5 containers
 - [ ] HTTPS working with valid SSL cert
 - [ ] `/health` returns 200 with both checks ok
@@ -945,6 +978,7 @@ Before marking Sprint 10 and the entire project complete, every item must be ✓
 - [ ] No secrets committed to git (`git log --all --oneline | xargs git show | grep -i "password\|secret\|key"` returns nothing sensitive)
 
 ### Open Source Readiness
+
 - [ ] `README.md` exists with quick start, feature comparison table, architecture summary
 - [ ] `docs/DEPLOYMENT.md` covers full prod setup
 - [ ] `ARCHITECTURE.md` is up to date

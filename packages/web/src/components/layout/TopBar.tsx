@@ -2,24 +2,28 @@ import { Menu, Sun, Moon, Monitor, Bell } from 'lucide-react'
 import { useUi } from '@/stores/ui.store'
 import { useLocation } from 'react-router-dom'
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
-  DropdownMenuSeparator, DropdownMenuLabel, DropdownMenuTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 const pageTitles: Record<string, string> = {
-  '/dashboard':     'Dashboard',
-  '/sessions':      'Live Sessions',
-  '/branches':      'Branches',
-  '/tokens':        'Tokens',
-  '/reports':       'Reports',
-  '/plans':         'Billing Plans',
-  '/wireguard':     'WireGuard',
-  '/audit':         'Audit Log',
-  '/users':         'Users',
+  '/dashboard': 'Dashboard',
+  '/sessions': 'Live Sessions',
+  '/branches': 'Branches',
+  '/tokens': 'Tokens',
+  '/reports': 'Reports',
+  '/plans': 'Billing Plans',
+  '/wireguard': 'WireGuard',
+  '/audit': 'Audit Log',
+  '/users': 'Users',
   '/organizations': 'Organizations',
-  '/settings':      'Settings',
+  '/settings': 'Settings',
 }
 
 export function TopBar() {
@@ -29,10 +33,12 @@ export function TopBar() {
 
   return (
     <TooltipProvider delayDuration={400}>
-      <header className={cn(
-        'h-14 border-b border-border bg-card/80 backdrop-blur-sm',
-        'flex items-center gap-3 px-4 flex-shrink-0 sticky top-0 z-10'
-      )}>
+      <header
+        className={cn(
+          'h-14 border-b border-border bg-card/80 backdrop-blur-sm',
+          'flex items-center gap-3 px-4 flex-shrink-0 sticky top-0 z-10'
+        )}
+      >
         {/* Mobile hamburger */}
         <Tooltip>
           <TooltipTrigger asChild>
@@ -66,7 +72,10 @@ export function TopBar() {
             <Tooltip>
               <TooltipTrigger asChild>
                 <DropdownMenuTrigger asChild>
-                  <button className="p-2 rounded-lg hover:bg-muted transition-colors" aria-label="Change theme">
+                  <button
+                    className="p-2 rounded-lg hover:bg-muted transition-colors"
+                    aria-label="Change theme"
+                  >
                     {theme === 'light' && <Sun size={17} />}
                     {theme === 'dark' && <Moon size={17} />}
                     {theme === 'system' && <Monitor size={17} />}
