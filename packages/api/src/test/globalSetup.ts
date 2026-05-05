@@ -37,5 +37,5 @@ export async function setup() {
 }
 
 export async function teardown() {
-  // pool is cleaned up when the test process exits
+  // Redis cleanup is handled per-app via the onClose hook in buildApp()
 }

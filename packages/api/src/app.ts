@@ -55,6 +55,10 @@ export async function buildApp() {
   await app.register(apikeyRoutes, { prefix: '/api' })
   await app.register(publicApiRoutes, { prefix: '/api' })
 
+  app.addHook('onClose', async () => {
+    if (redis.isOpen) await redis.quit()
+  })
+
   app.get('/health', async (_request, reply) => {
     const checks: Record<string, 'ok' | 'error'> = {}
 

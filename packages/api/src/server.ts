@@ -40,7 +40,7 @@ async function shutdown(signal: string) {
   try {
     await app?.close()
     await pool.end()
-    await redis.quit()
+    if (redis.isOpen) await redis.quit()
     console.info('Shutdown complete')
     process.exit(0)
   } catch (err) {
