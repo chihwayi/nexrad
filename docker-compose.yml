@@ -50,6 +50,8 @@ services:
       VITE_API_URL: 'http://${HOST:-localhost}:${API_PORT:-3000}'
       VITE_WS_URL: 'ws://${HOST:-localhost}:${API_PORT:-3000}'
       VITE_APP_NAME: ${APP_NAME:-NexRAD}
+      # Vite dev-server runs inside Docker, so proxy must target the API service on the docker network.
+      VITE_DEV_API_PROXY_TARGET: 'http://api:3000'
     volumes:
       - ./packages/web/src:/app/packages/web/src
       - ./packages/web/public:/app/packages/web/public

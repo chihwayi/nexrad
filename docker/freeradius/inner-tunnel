@@ -1,0 +1,34 @@
+server inner-tunnel {
+
+listen {
+    ipaddr      = 127.0.0.1
+    port        = 18120
+    type        = auth
+}
+
+authorize {
+    filter_username
+    sql
+    expiration
+    logintime
+    pap
+}
+
+authenticate {
+    Auth-Type PAP {
+        pap
+    }
+}
+
+session {
+    sql
+}
+
+post-auth {
+    sql
+    Post-Auth-Type REJECT {
+        sql
+    }
+}
+
+}

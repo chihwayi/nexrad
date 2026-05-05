@@ -69,6 +69,25 @@ services:
     restart: always
     networks: [frontend]
 
+  freeradius:
+    build:
+      context: ./docker/freeradius
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - '1812:1812/udp'
+      - '1813:1813/udp'
+    environment:
+      DB_HOST: mysql
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      RADIUS_DEFAULT_SECRET: ${RADIUS_DEFAULT_SECRET:-changeme}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks: [backend]
+
   nginx:
     image: nginx:1.25-alpine
     restart: always

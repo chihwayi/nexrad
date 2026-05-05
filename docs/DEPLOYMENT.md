@@ -59,14 +59,26 @@ systemctl start wg-quick@wg0
 
 Set `WG_CONFIG_PATH=/etc/wireguard/wg0.conf` in `.env`.
 
-## 5. Database Migrations
+## 5. FreeRADIUS Setup
+
+FreeRADIUS runs as a Docker container alongside the API. It connects to the same MySQL database and reads authentication data from the standard FreeRADIUS schema tables (`radcheck`, `radgroupreply`, etc.) that NexRAD manages.
+
+**Add to `.env`:**
 
 ```bash
-# First run — migrations are applied via docker-entrypoint-initdb.d automatically
-# For subsequent runs:
-docker compose -f docker-compose.prod.yml exec mysql \
-  mysql -u${DB_USER} -p${DB_PASSWORD} ${DB_NAME} \
-  < packages/api/src/db/migrations/003_performance_indexes.sql
+# Fallback RADIUS shared secret for WireGuard tunnel range (10.8.0.0/24).
+# Per-branch secrets are stored in the `nas` table and take precedence.
+RADIUS_DEFAULT_SECRET=your-strong-radius-secret
+```
+
+FreeRADIUS loads NAS clients directly from the `nas` MySQL table (`read_clients = yes`), so each branch's per-branch RADIUS secret (set by NexRAD on branch creation) is automatically picked up — no manual FreeRADIUS config per branch.
+
+**Open firewall ports:**
+
+```bash
+ufw allow 1812/udp   # RADIUS authentication
+ufw allow 1813/udp   # RADIUS accounting
+ufw allow 51820/udp  # WireGuard
 ```
 
 ## 6. Start Production Stack
@@ -80,15 +92,31 @@ docker compose -f docker-compose.prod.yml ps
 
 # Check logs
 docker compose -f docker-compose.prod.yml logs -f api
+docker compose -f docker-compose.prod.yml logs -f freeradius
 ```
 
-## 7. First Login
+## 7. First Login & Branch Setup
 
 1. Navigate to `https://yourdomain.com`
-2. Login with `admin` / `admin123`
-3. **Immediately change the admin password** in Users → Edit
-4. Create your organization in Org Settings
-5. Add branches in Branches → Add Branch
+2. Login with `superadmin` / `admin123` — **immediately change this password**
+3. Go to **Branches → Add Branch** — fill in name, shortname, location
+4. Click the branch row → **Download .rsc** (RouterOS provisioning script)
+5. Upload the `.rsc` to MikroTik via **Files**, then run it in **Terminal**: `/import file=provision-branch.rsc`
+6. The MikroTik will set up WireGuard, configure RADIUS, and call back to register its public key automatically
+7. Branch status changes to **Active** in the UI once registration completes
+
+**MikroTik requirements:**
+
+- RouterOS 7.1+ (WireGuard support)
+- The MikroTik must have internet access to reach your server on port 443 (HTTPS for registration callback) and 51820/udp (WireGuard)
+- After WireGuard tunnel is up, RADIUS traffic flows on 10.8.0.x → server:1812/udp
+
+## 8. Generate WiFi Tokens
+
+1. In NexRAD: **Plans → Add Plan** — set name, duration, data cap, price
+2. **Tokens → Generate** — choose plan, quantity, optional prefix
+3. **Print vouchers** as PDF — each voucher shows the username/password (same value for hotspot tokens)
+4. On MikroTik: the hotspot is pre-configured by the `.rsc` script. Clients connect to WiFi, get redirected to the hotspot login page, enter the token code as both username and password
 
 ## 8. Backups
 

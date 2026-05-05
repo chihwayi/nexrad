@@ -1,0 +1,59 @@
+server default {
+
+listen {
+    type        = auth
+    ipaddr      = *
+    port        = 0
+    limit {
+        max_connections = 16
+        lifetime        = 0
+        idle_timeout    = 30
+    }
+}
+
+listen {
+    ipaddr  = *
+    port    = 0
+    type    = acct
+}
+
+authorize {
+    filter_username
+    preprocess
+    sql
+    expiration
+    logintime
+    pap
+}
+
+authenticate {
+    Auth-Type PAP {
+        pap
+    }
+}
+
+preacct {
+    preprocess
+    acct_unique
+    suffix
+    files
+}
+
+accounting {
+    sql
+    exec
+}
+
+session {
+    sql
+}
+
+post-auth {
+    sql
+    Post-Auth-Type REJECT {
+        sql
+        attr_filter.access_reject
+    }
+}
+
+}

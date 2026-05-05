@@ -8,7 +8,7 @@ FROM base AS builder
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY packages/api/package.json    ./packages/api/
 COPY packages/shared/package.json ./packages/shared/
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --prod=false
 
 # Copy source files required for compilation
 COPY packages/shared/src     ./packages/shared/src
@@ -23,8 +23,12 @@ RUN pnpm deploy --filter @nexrad/api --prod /prod
 # ── Development ──────────────────────────────────────────
 FROM base AS development
 WORKDIR /app
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/packages/api/node_modules ./packages/api/node_modules
+# Install deps in this stage to avoid broken pnpm links
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY packages/api/package.json    ./packages/api/
+COPY packages/shared/package.json ./packages/shared/
+RUN pnpm install --frozen-lockfile --prod=false
+
 COPY packages/api ./packages/api
 COPY packages/shared ./packages/shared
 EXPOSE 3000
