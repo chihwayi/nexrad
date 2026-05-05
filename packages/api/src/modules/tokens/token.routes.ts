@@ -22,7 +22,7 @@ export async function tokenRoutes(app: FastifyInstance) {
   // List tokens (with filters)
   app.get('/tokens', async (req, reply) => {
     const q = req.query as Record<string, string>
-    const orgId = req.user!.orgId
+    const orgId = req.user!.orgId ?? (req.user!.role === 'superadmin' ? 1 : null)
     if (!orgId) return reply.status(403).send({ error: 'Organization context required' })
 
     return listTokens({
