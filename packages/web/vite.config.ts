@@ -3,9 +3,9 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import path from 'path'
 
-export default defineConfig(({ command }) => {
+export default defineConfig(({ command, mode }) => {
   const apiProxyTarget = process.env.VITE_DEV_API_PROXY_TARGET || process.env.VITE_API_URL
-  if (command === 'serve' && !apiProxyTarget) {
+  if (command === 'serve' && mode !== 'test' && !apiProxyTarget) {
     throw new Error(
       'Missing API proxy target. Set VITE_DEV_API_PROXY_TARGET (recommended for dev) or VITE_API_URL.'
     )
