@@ -80,7 +80,9 @@ export default defineConfig(({ command }) => {
       },
     },
     server: {
-      proxy: apiProxyTarget ? { '/api': { target: apiProxyTarget, changeOrigin: true } } : {},
+      proxy: apiProxyTarget
+        ? { '/api': { target: apiProxyTarget, changeOrigin: true } }
+        : undefined,
     },
   }
 })
