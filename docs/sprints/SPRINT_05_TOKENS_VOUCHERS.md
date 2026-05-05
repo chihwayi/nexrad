@@ -1,11 +1,15 @@
 # Sprint 5 — Token Generation & Voucher Printing
+
 **Duration:** 4 days | **Goal:** Batch token generation, full token management table, printable PDF voucher sheets, WhatsApp share link, and per-branch token filtering.
+
+> **AI ASSISTANT:** Before implementing this sprint, read `docs/GROUND_TRUTH.md` for canonical component APIs, import paths, and store names. Sprint docs may conflict — GROUND_TRUTH.md wins.
 
 > After this sprint: an operator can generate 50 tokens for a specific plan, see them in a table, print a professional voucher sheet, or share a token via WhatsApp — all in under 2 minutes.
 
 ---
 
 ## Prerequisites
+
 - Sprint 0–4 sign-off checklists all ✓
 - At least one billing plan exists in `nx_billing_plans` or `billing_plans` table
 - `pdf-lib` and `qrcode` installed (already in package.json)
@@ -15,6 +19,7 @@
 ## Task 5.1 — Token Generation Service (API)
 
 ### `packages/api/src/modules/tokens/token.service.ts`
+
 ```typescript
 import { v4 as uuidv4 } from 'uuid'
 import { query, queryOne } from '../../db/mysql.js'
@@ -95,11 +100,14 @@ export async function generateTokens(input: GenerateTokensInput): Promise<{
     name: string
     frGroupName: string | null
     cost: number
-  }>(`
+  }>(
+    `
     SELECT id, name, fr_group_name AS frGroupName, cost
     FROM nx_billing_plans
     WHERE id = ? AND org_id = ?
-  `, [input.planId, input.orgId])
+  `,
+    [input.planId, input.orgId]
+  )
 
   if (!plan) throw new Error('Billing plan not found')
 
@@ -120,35 +128,53 @@ export async function generateTokens(input: GenerateTokensInput): Promise<{
     generatedUsernames.push(username)
 
     // nx_tokens tracking
-    await query(`
+    await query(
+      `
       INSERT INTO nx_tokens
         (org_id, username, branch_id, plan_id, prefix, batch_id, created_by, expires_at, notes)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
-      input.orgId, username, input.branchId ?? null, input.planId,
-      input.prefix ?? null, batchId, input.createdBy,
-      input.expiresAt ?? null, input.notes ?? null,
-    ])
+    `,
+      [
+        input.orgId,
+        username,
+        input.branchId ?? null,
+        input.planId,
+        input.prefix ?? null,
+        batchId,
+        input.createdBy,
+        input.expiresAt ?? null,
+        input.notes ?? null,
+      ]
+    )
 
     // FreeRADIUS: radcheck (auth)
-    await query(`
+    await query(
+      `
       INSERT INTO radcheck (username, attribute, op, value)
       VALUES (?, 'Cleartext-Password', ':=', ?)
-    `, [username, username])  // password = username for voucher tokens
+    `,
+      [username, username]
+    ) // password = username for voucher tokens
 
     // FreeRADIUS: radusergroup (policy)
     if (plan.frGroupName) {
-      await query(`
+      await query(
+        `
         INSERT INTO radusergroup (username, groupname, priority)
         VALUES (?, ?, 1)
-      `, [username, plan.frGroupName])
+      `,
+        [username, plan.frGroupName]
+      )
     }
 
     // daloRADIUS compat: userbillinfo
-    await query(`
+    await query(
+      `
       INSERT INTO userbillinfo (username, planName, creationdate, creationby, expiration)
       VALUES (?, ?, NOW(), ?, ?)
-    `, [username, plan.name, branchShortname, input.expiresAt ?? null])
+    `,
+      [username, plan.name, branchShortname, input.expiresAt ?? null]
+    )
   }
 
   // Cache batch summary in Redis for 24h
@@ -174,9 +200,18 @@ export async function listTokens(filter: TokenListFilter): Promise<{
   const conditions: string[] = ['t.org_id = ?']
   const params: unknown[] = [filter.orgId]
 
-  if (filter.branchId) { conditions.push('t.branch_id = ?'); params.push(filter.branchId) }
-  if (filter.planId) { conditions.push('t.plan_id = ?'); params.push(filter.planId) }
-  if (filter.batchId) { conditions.push('t.batch_id = ?'); params.push(filter.batchId) }
+  if (filter.branchId) {
+    conditions.push('t.branch_id = ?')
+    params.push(filter.branchId)
+  }
+  if (filter.planId) {
+    conditions.push('t.plan_id = ?')
+    params.push(filter.planId)
+  }
+  if (filter.batchId) {
+    conditions.push('t.batch_id = ?')
+    params.push(filter.batchId)
+  }
   if (filter.search) {
     conditions.push('t.username LIKE ?')
     params.push(`%${filter.search}%`)
@@ -189,11 +224,15 @@ export async function listTokens(filter: TokenListFilter): Promise<{
 
   const where = conditions.join(' AND ')
 
-  const [countRow] = await query<{ total: number }>(`
+  const [countRow] = await query<{ total: number }>(
+    `
     SELECT COUNT(*) AS total FROM nx_tokens t WHERE ${where}
-  `, params)
+  `,
+    params
+  )
 
-  const rows = await query<Token>(`
+  const rows = await query<Token>(
+    `
     SELECT
       t.id, t.org_id AS orgId, t.username, t.branch_id AS branchId,
       t.plan_id AS planId, t.prefix, t.batch_id AS batchId,
@@ -211,7 +250,9 @@ export async function listTokens(filter: TokenListFilter): Promise<{
     WHERE ${where}
     ORDER BY t.created_at DESC
     LIMIT ? OFFSET ?
-  `, [...params, pageSize, offset])
+  `,
+    [...params, pageSize, offset]
+  )
 
   return {
     tokens: rows.map((r) => ({ ...r, isUsed: Boolean((r as any).isUsed) })),
@@ -223,9 +264,12 @@ export async function listTokens(filter: TokenListFilter): Promise<{
 
 export async function deleteToken(orgId: number, username: string): Promise<void> {
   // Prevent deleting tokens that have been used
-  const [used] = await query<{ count: number }>(`
+  const [used] = await query<{ count: number }>(
+    `
     SELECT COUNT(*) AS count FROM radacct WHERE username = ?
-  `, [username])
+  `,
+    [username]
+  )
   if (Number(used?.count) > 0) {
     throw new Error('Cannot delete a token that has active or historical sessions')
   }
@@ -244,7 +288,8 @@ export async function getTokenBatches(orgId: number, limit = 20) {
     count: number
     usedCount: number
     createdAt: string
-  }>(`
+  }>(
+    `
     SELECT
       t.batch_id AS batchId,
       MIN(p.name) AS planName,
@@ -260,7 +305,9 @@ export async function getTokenBatches(orgId: number, limit = 20) {
     GROUP BY t.batch_id
     ORDER BY MIN(t.created_at) DESC
     LIMIT ?
-  `, [orgId, limit])
+  `,
+    [orgId, limit]
+  )
 }
 ```
 
@@ -269,6 +316,7 @@ export async function getTokenBatches(orgId: number, limit = 20) {
 ## Task 5.2 — Token Routes (API)
 
 ### `packages/api/src/modules/tokens/token.routes.ts`
+
 ```typescript
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
@@ -279,7 +327,11 @@ const GenerateSchema = z.object({
   planId: z.number().int().positive(),
   branchId: z.number().int().positive().optional(),
   count: z.number().int().min(1).max(500),
-  prefix: z.string().max(10).regex(/^[A-Za-z0-9]*$/).optional(),
+  prefix: z
+    .string()
+    .max(10)
+    .regex(/^[A-Za-z0-9]*$/)
+    .optional(),
   expiresAt: z.string().datetime().optional(),
   notes: z.string().max(255).optional(),
 })
@@ -303,19 +355,15 @@ export async function tokenRoutes(app: FastifyInstance) {
   })
 
   // Generate tokens
-  app.post(
-    '/tokens/generate',
-    { preHandler: requireRole('operator') },
-    async (req, reply) => {
-      const body = GenerateSchema.parse(req.body)
-      const result = await generateTokens({
-        ...body,
-        orgId: req.user!.orgId,
-        createdBy: req.user!.id,
-      })
-      return reply.status(201).send(result)
-    }
-  )
+  app.post('/tokens/generate', { preHandler: requireRole('operator') }, async (req, reply) => {
+    const body = GenerateSchema.parse(req.body)
+    const result = await generateTokens({
+      ...body,
+      orgId: req.user!.orgId,
+      createdBy: req.user!.id,
+    })
+    return reply.status(201).send(result)
+  })
 
   // Get batch list
   app.get('/tokens/batches', async (req) => {
@@ -335,6 +383,7 @@ export async function tokenRoutes(app: FastifyInstance) {
 ```
 
 ### Register in `packages/api/src/app.ts`:
+
 ```typescript
 import { tokenRoutes } from './modules/tokens/token.routes.js'
 await app.register(tokenRoutes, { prefix: '/api' })
@@ -345,6 +394,7 @@ await app.register(tokenRoutes, { prefix: '/api' })
 ## Task 5.3 — Voucher PDF Generation (API)
 
 ### `packages/api/src/modules/tokens/voucher.service.ts`
+
 ```typescript
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
 import type { Token } from './token.service.js'
@@ -391,7 +441,8 @@ export async function generateVoucherPdf(opts: VoucherOptions): Promise<Uint8Arr
 
       // Card border
       page.drawRectangle({
-        x, y,
+        x,
+        y,
         width: CARD_W,
         height: CARD_H,
         borderColor: rgb(0.8, 0.8, 0.8),
@@ -401,10 +452,11 @@ export async function generateVoucherPdf(opts: VoucherOptions): Promise<Uint8Arr
 
       // Accent bar at top of card
       page.drawRectangle({
-        x, y: y + CARD_H - 16,
+        x,
+        y: y + CARD_H - 16,
         width: CARD_W,
         height: 16,
-        color: rgb(0.25, 0.32, 0.71),  // indigo-600
+        color: rgb(0.25, 0.32, 0.71), // indigo-600
       })
 
       // Org name in accent bar
@@ -509,6 +561,7 @@ export async function generateVoucherPdf(opts: VoucherOptions): Promise<Uint8Arr
 ```
 
 ### `packages/api/src/modules/tokens/voucher.routes.ts`
+
 ```typescript
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
@@ -569,6 +622,7 @@ export async function voucherRoutes(app: FastifyInstance) {
 ```
 
 ### Register in `packages/api/src/app.ts`:
+
 ```typescript
 import { voucherRoutes } from './modules/tokens/voucher.routes.js'
 await app.register(voucherRoutes, { prefix: '/api' })
@@ -579,22 +633,40 @@ await app.register(voucherRoutes, { prefix: '/api' })
 ## Task 5.4 — Frontend: Tokens Page
 
 ### `packages/web/src/pages/Tokens.tsx`
+
 ```tsx
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../lib/api'
-import { PageHeader } from '../components/PageHeader'
-import { DataTable } from '../components/DataTable'
-import { Button } from '../components/ui/button'
-import { Input } from '../components/ui/input'
-import { Label } from '../components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
+import { api } from '@/lib/api'
+import { toast } from '@/lib/toast'
+import { PageHeader } from '@/components/shared/PageHeader'
+import { DataTable } from '@/components/shared/DataTable'
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Plus, Printer, MessageCircle, Trash2, RefreshCw } from 'lucide-react'
 import type { Token } from '@nexrad/shared'
 
-interface Plan { id: number; name: string; cost: number; currency: string }
-interface Branch { id: number; name: string; shortname: string }
+interface Plan {
+  id: number
+  name: string
+  cost: number
+  currency: string
+}
+interface Branch {
+  id: number
+  name: string
+  shortname: string
+}
 
 export default function Tokens() {
   const qc = useQueryClient()
@@ -605,9 +677,11 @@ export default function Tokens() {
   const { data, isLoading } = useQuery({
     queryKey: ['tokens', filter, page],
     queryFn: () =>
-      api.get('/tokens', {
-        params: { ...filter, page, pageSize: 50 },
-      }).then((r) => r.data as { tokens: Token[]; total: number; page: number }),
+      api
+        .get('/tokens', {
+          params: { ...filter, page, pageSize: 50 },
+        })
+        .then((r) => r.data as { tokens: Token[]; total: number; page: number }),
   })
 
   const { data: branches = [] } = useQuery({
@@ -636,34 +710,49 @@ export default function Tokens() {
   }
 
   const columns = [
-    { key: 'username', header: 'Token / Username', render: (v: string) => (
-      <span className="font-mono font-semibold text-sm">{v}</span>
-    )},
-    { key: 'planName', header: 'Plan', render: (v: string) => v ?? '—' },
-    { key: 'branchName', header: 'Branch', render: (v: string) => v ?? '—' },
     {
-      key: 'isUsed', header: 'Status',
-      render: (v: boolean) =>
-        v ? <span className="badge-offline">Used</span> : <span className="badge-online">Available</span>,
+      key: 'username',
+      header: 'Token / Username',
+      cell: (row: Token) => <span className="font-mono font-semibold text-sm">{row.username}</span>,
+    },
+    { key: 'planName', header: 'Plan', cell: (row: Token) => row.planName ?? '—' },
+    { key: 'branchName', header: 'Branch', cell: (row: Token) => row.branchName ?? '—' },
+    {
+      key: 'isUsed',
+      header: 'Status',
+      cell: (row: Token) =>
+        row.isUsed ? (
+          <span className="badge-offline">Used</span>
+        ) : (
+          <span className="badge-online">Available</span>
+        ),
     },
     {
-      key: 'sessionStart', header: 'First Used',
-      render: (v: string | null) => v ? new Date(v).toLocaleString() : '—',
+      key: 'sessionStart',
+      header: 'First Used',
+      cell: (row: Token) => (row.sessionStart ? new Date(row.sessionStart).toLocaleString() : '—'),
     },
     {
-      key: 'expiresAt', header: 'Expires',
-      render: (v: string | null) => v ? new Date(v).toLocaleDateString() : '—',
+      key: 'expiresAt',
+      header: 'Expires',
+      cell: (row: Token) => (row.expiresAt ? new Date(row.expiresAt).toLocaleDateString() : '—'),
     },
     {
-      key: 'username', header: '',
-      render: (v: string, row: Token) => (
+      key: 'id',
+      header: '',
+      cell: (row: Token) => (
         <div className="flex gap-1 justify-end">
-          <Button variant="ghost" size="sm" title="Share via WhatsApp" onClick={() => shareWhatsApp(row)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            title="Share via WhatsApp"
+            onClick={() => shareWhatsApp(row)}
+          >
             <MessageCircle className="h-4 w-4 text-green-500" />
           </Button>
           {!row.isUsed && (
             <DeleteTokenButton
-              username={v}
+              username={row.username}
               onDeleted={() => qc.invalidateQueries({ queryKey: ['tokens'] })}
             />
           )}
@@ -693,7 +782,10 @@ export default function Tokens() {
       <div className="flex gap-3 flex-wrap items-end">
         <div>
           <Label className="text-xs text-muted-foreground mb-1 block">Status</Label>
-          <Select value={filter.status} onValueChange={(v) => setFilter((f) => ({ ...f, status: v }))}>
+          <Select
+            value={filter.status}
+            onValueChange={(v) => setFilter((f) => ({ ...f, status: v }))}
+          >
             <SelectTrigger className="w-32">
               <SelectValue />
             </SelectTrigger>
@@ -707,14 +799,19 @@ export default function Tokens() {
 
         <div>
           <Label className="text-xs text-muted-foreground mb-1 block">Branch</Label>
-          <Select value={filter.branchId || 'all'} onValueChange={(v) => setFilter((f) => ({ ...f, branchId: v === 'all' ? '' : v }))}>
+          <Select
+            value={filter.branchId || 'all'}
+            onValueChange={(v) => setFilter((f) => ({ ...f, branchId: v === 'all' ? '' : v }))}
+          >
             <SelectTrigger className="w-40">
               <SelectValue placeholder="All branches" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All branches</SelectItem>
               {branches.map((b) => (
-                <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>
+                <SelectItem key={b.id} value={String(b.id)}>
+                  {b.name}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -741,10 +838,10 @@ export default function Tokens() {
 
       <DataTable
         data={data?.tokens ?? []}
-        columns={columns as any}
-        keyField="id"
+        columns={columns}
+        rowKey={(row) => row.id}
         loading={isLoading}
-        emptyMessage="No tokens found. Generate some tokens to get started."
+        emptyText="No tokens found. Generate some tokens to get started."
       />
 
       {/* Pagination */}
@@ -754,11 +851,17 @@ export default function Tokens() {
             Showing {(page - 1) * 50 + 1}–{Math.min(page * 50, data.total)} of {data.total}
           </p>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => setPage((p) => p - 1)} disabled={page === 1}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage((p) => p - 1)}
+              disabled={page === 1}
+            >
               Previous
             </Button>
             <Button
-              variant="outline" size="sm"
+              variant="outline"
+              size="sm"
               onClick={() => setPage((p) => p + 1)}
               disabled={page * 50 >= data.total}
             >
@@ -776,16 +879,21 @@ export default function Tokens() {
         onGenerated={(batchId) => {
           qc.invalidateQueries({ queryKey: ['tokens'] })
           setShowGenerate(false)
-          if (confirm('Tokens generated! Print vouchers now?')) {
-            printVouchers(batchId)
-          }
+          toast.success('Tokens generated!', 'Click "Print Vouchers" to download the PDF.')
+          printVouchers(batchId)
         }}
       />
     </div>
   )
 }
 
-function GenerateDialog({ open, plans, branches, onClose, onGenerated }: {
+function GenerateDialog({
+  open,
+  plans,
+  branches,
+  onClose,
+  onGenerated,
+}: {
   open: boolean
   plans: Plan[]
   branches: Branch[]
@@ -803,13 +911,15 @@ function GenerateDialog({ open, plans, branches, onClose, onGenerated }: {
 
   const mutation = useMutation({
     mutationFn: (data: typeof form) =>
-      api.post('/tokens/generate', {
-        planId: Number(data.planId),
-        branchId: data.branchId ? Number(data.branchId) : undefined,
-        count: data.count,
-        prefix: data.prefix || undefined,
-        notes: data.notes || undefined,
-      }).then((r) => r.data),
+      api
+        .post('/tokens/generate', {
+          planId: Number(data.planId),
+          branchId: data.branchId ? Number(data.branchId) : undefined,
+          count: data.count,
+          prefix: data.prefix || undefined,
+          notes: data.notes || undefined,
+        })
+        .then((r) => r.data),
     onSuccess: (data) => onGenerated(data.batchId),
     onError: (e: any) => setError(e.response?.data?.message ?? 'Failed to generate tokens'),
   })
@@ -823,7 +933,10 @@ function GenerateDialog({ open, plans, branches, onClose, onGenerated }: {
         <div className="space-y-4 py-2">
           <div>
             <Label>Billing Plan *</Label>
-            <Select value={form.planId} onValueChange={(v) => setForm((f) => ({ ...f, planId: v }))}>
+            <Select
+              value={form.planId}
+              onValueChange={(v) => setForm((f) => ({ ...f, planId: v }))}
+            >
               <SelectTrigger>
                 <SelectValue placeholder="Select a plan..." />
               </SelectTrigger>
@@ -838,14 +951,19 @@ function GenerateDialog({ open, plans, branches, onClose, onGenerated }: {
           </div>
           <div>
             <Label>Branch (optional)</Label>
-            <Select value={form.branchId || 'none'} onValueChange={(v) => setForm((f) => ({ ...f, branchId: v === 'none' ? '' : v }))}>
+            <Select
+              value={form.branchId || 'none'}
+              onValueChange={(v) => setForm((f) => ({ ...f, branchId: v === 'none' ? '' : v }))}
+            >
               <SelectTrigger>
                 <SelectValue placeholder="All / Unassigned" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">Unassigned (HQ)</SelectItem>
                 {branches.map((b) => (
-                  <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>
+                  <SelectItem key={b.id} value={String(b.id)}>
+                    {b.name}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -882,7 +1000,9 @@ function GenerateDialog({ open, plans, branches, onClose, onGenerated }: {
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={onClose}>Cancel</Button>
+            <Button variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
             <Button
               onClick={() => mutation.mutate(form)}
               disabled={mutation.isPending || !form.planId || form.count < 1}
@@ -906,10 +1026,17 @@ function DeleteTokenButton({ username, onDeleted }: { username: string; onDelete
   if (confirming) {
     return (
       <div className="flex gap-1">
-        <Button variant="destructive" size="sm" onClick={() => mutation.mutate()} disabled={mutation.isPending}>
+        <Button
+          variant="destructive"
+          size="sm"
+          onClick={() => mutation.mutate()}
+          disabled={mutation.isPending}
+        >
           Delete
         </Button>
-        <Button variant="outline" size="sm" onClick={() => setConfirming(false)}>Cancel</Button>
+        <Button variant="outline" size="sm" onClick={() => setConfirming(false)}>
+          Cancel
+        </Button>
       </div>
     )
   }
@@ -928,6 +1055,7 @@ function DeleteTokenButton({ username, onDeleted }: { username: string; onDelete
 > Full plan management is Sprint 7. Here we add just the list endpoint so the token generation form works.
 
 ### `packages/api/src/modules/plans/plan.routes.ts`
+
 ```typescript
 import type { FastifyInstance } from 'fastify'
 import { authenticate } from '../auth/auth.middleware.js'
@@ -938,21 +1066,30 @@ export async function planRoutes(app: FastifyInstance) {
 
   app.get('/plans', async (req) => {
     return query<{
-      id: number; name: string; displayName: string | null;
-      cost: number; currency: string; timeBankHours: number;
-      dataLimitMb: number | null; isActive: boolean;
-    }>(`
+      id: number
+      name: string
+      displayName: string | null
+      cost: number
+      currency: string
+      timeBankHours: number
+      dataLimitMb: number | null
+      isActive: boolean
+    }>(
+      `
       SELECT id, name, display_name AS displayName, cost, currency,
              time_bank_hours AS timeBankHours, data_limit_mb AS dataLimitMb, is_active AS isActive
       FROM nx_billing_plans
       WHERE org_id = ? AND is_active = 1
       ORDER BY cost
-    `, [req.user!.orgId])
+    `,
+      [req.user!.orgId]
+    )
   })
 }
 ```
 
 ### Register in `packages/api/src/app.ts`:
+
 ```typescript
 import { planRoutes } from './modules/plans/plan.routes.js'
 await app.register(planRoutes, { prefix: '/api' })
@@ -963,15 +1100,17 @@ await app.register(planRoutes, { prefix: '/api' })
 ## Task 5.6 — Sidebar Nav: Add Tokens Link
 
 ### Update Sidebar navItems:
+
 ```typescript
 { href: '/tokens', label: 'Tokens', icon: Ticket, roles: ['superadmin','orgadmin','branchmanager','operator'] },
 ```
 
 ### Add route in `packages/web/src/App.tsx`:
+
 ```tsx
 import Tokens from './pages/Tokens'
 // inside Routes:
-<Route path="/tokens" element={<Tokens />} />
+;<Route path="/tokens" element={<Tokens />} />
 ```
 
 ### Import `Ticket` from lucide-react.
@@ -981,6 +1120,7 @@ import Tokens from './pages/Tokens'
 ## Task 5.7 — Integration Tests
 
 ### `packages/api/src/modules/tokens/__tests__/token.test.ts`
+
 ```typescript
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { buildApp } from '../../../app.js'
@@ -1027,7 +1167,7 @@ describe('Token endpoints', () => {
       headers: { authorization: `Bearer ${token}` },
     })
     const plans = plansRes.json()
-    if (!plans.length) return  // Skip if no plans seeded
+    if (!plans.length) return // Skip if no plans seeded
 
     const res = await app.inject({
       method: 'POST',

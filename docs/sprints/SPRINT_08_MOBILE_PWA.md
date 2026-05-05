@@ -1,11 +1,15 @@
 # Sprint 8 — Mobile PWA & Operator Experience
+
 **Duration:** 3 days | **Goal:** Progressive Web App setup, mobile-optimized operator views, offline indicators, install prompt, push notification groundwork, and a streamlined "quick token" flow for branch operators.
+
+> **AI ASSISTANT:** Before implementing this sprint, read `docs/GROUND_TRUTH.md` for canonical component APIs, import paths, and store names. Sprint docs may conflict — GROUND_TRUTH.md wins.
 
 > After this sprint: a branch operator can install NexRAD on their phone from the browser, generate and share a token in under 30 seconds, and see branch stats without navigating complex menus.
 
 ---
 
 ## Prerequisites
+
 - Sprint 0–7 sign-off checklists all ✓
 - `vite-plugin-pwa` already in package.json (installed in Sprint 0 setup)
 - Vite config has PWA plugin stub from Sprint 0
@@ -15,6 +19,7 @@
 ## Task 8.1 — PWA Manifest & Service Worker Configuration
 
 ### Update `packages/web/vite.config.ts` — complete PWA config:
+
 ```typescript
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -39,7 +44,12 @@ export default defineConfig({
         scope: '/',
         icons: [
           { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+          {
+            src: '/icons/icon-512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'any maskable',
+          },
         ],
         categories: ['productivity', 'utilities'],
         shortcuts: [
@@ -97,6 +107,7 @@ export default defineConfig({
 ## Task 8.2 — App Icons (Placeholder)
 
 ### Create icon files (use any 192×192 and 512×512 PNG for dev):
+
 ```bash
 mkdir -p packages/web/public/icons
 
@@ -124,6 +135,7 @@ chmod +x packages/web/public/icons/create-icons.sh
 ## Task 8.3 — PWA Install Prompt Component
 
 ### `packages/web/src/hooks/usePwaInstall.ts`
+
 ```typescript
 import { useState, useEffect } from 'react'
 
@@ -167,6 +179,7 @@ export function usePwaInstall() {
 ```
 
 ### `packages/web/src/components/InstallBanner.tsx`
+
 ```tsx
 import { usePwaInstall } from '../hooks/usePwaInstall'
 import { Button } from './ui/button'
@@ -180,8 +193,10 @@ export function InstallBanner() {
   if (!canInstall || dismissed) return null
 
   return (
-    <div className="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-80 z-50
-                    bg-card border border-border rounded-xl shadow-lg p-4 flex items-center gap-3">
+    <div
+      className="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-80 z-50
+                    bg-card border border-border rounded-xl shadow-lg p-4 flex items-center gap-3"
+    >
       <div className="p-2 bg-primary/10 rounded-lg shrink-0">
         <Download className="h-5 w-5 text-primary" />
       </div>
@@ -190,7 +205,9 @@ export function InstallBanner() {
         <p className="text-xs text-muted-foreground">Add to home screen for quick access</p>
       </div>
       <div className="flex gap-1 shrink-0">
-        <Button size="sm" onClick={install}>Install</Button>
+        <Button size="sm" onClick={install}>
+          Install
+        </Button>
         <Button size="sm" variant="ghost" onClick={() => setDismissed(true)}>
           <X className="h-4 w-4" />
         </Button>
@@ -201,10 +218,11 @@ export function InstallBanner() {
 ```
 
 ### Add `<InstallBanner />` to `packages/web/src/components/AppShell.tsx`:
+
 ```tsx
 import { InstallBanner } from './InstallBanner'
 // Inside AppShell return, after the main content:
-<InstallBanner />
+;<InstallBanner />
 ```
 
 ---
@@ -212,6 +230,7 @@ import { InstallBanner } from './InstallBanner'
 ## Task 8.4 — Network Status Indicator
 
 ### `packages/web/src/hooks/useNetworkStatus.ts`
+
 ```typescript
 import { useState, useEffect } from 'react'
 
@@ -234,6 +253,7 @@ export function useNetworkStatus() {
 ```
 
 ### `packages/web/src/components/OfflineBanner.tsx`
+
 ```tsx
 import { useNetworkStatus } from '../hooks/useNetworkStatus'
 import { WifiOff } from 'lucide-react'
@@ -243,8 +263,10 @@ export function OfflineBanner() {
   if (isOnline) return null
 
   return (
-    <div className="fixed top-0 left-0 right-0 z-50 bg-destructive text-destructive-foreground
-                    text-sm text-center py-2 flex items-center justify-center gap-2">
+    <div
+      className="fixed top-0 left-0 right-0 z-50 bg-destructive text-destructive-foreground
+                    text-sm text-center py-2 flex items-center justify-center gap-2"
+    >
       <WifiOff className="h-4 w-4" />
       You are offline — some features may be unavailable
     </div>
@@ -253,10 +275,11 @@ export function OfflineBanner() {
 ```
 
 ### Add to AppShell above everything else:
+
 ```tsx
 import { OfflineBanner } from './OfflineBanner'
 // First element inside AppShell return:
-<OfflineBanner />
+;<OfflineBanner />
 ```
 
 ---
@@ -266,21 +289,39 @@ import { OfflineBanner } from './OfflineBanner'
 > This is a simplified token generation flow designed for operators on mobile. Fewer taps = faster service at the branch counter.
 
 ### `packages/web/src/pages/QuickToken.tsx`
+
 ```tsx
 import { useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { api } from '../lib/api'
-import { Button } from '../components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
+import { api } from '@/lib/api'
+import { Button } from '@/components/ui/button'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { MessageCircle, Printer, Copy, Check, Zap } from 'lucide-react'
-import { useAuthStore } from '../stores/auth.store'
+import { useAuth } from '@/stores/auth.store'
 
-interface Plan { id: number; name: string; displayName: string | null; cost: number; currency: string }
+interface Plan {
+  id: number
+  name: string
+  displayName: string | null
+  cost: number
+  currency: string
+}
 
 export default function QuickToken() {
-  const user = useAuthStore((s) => s.user)
+  const user = useAuth((s) => s.user)
   const [planId, setPlanId] = useState('')
-  const [result, setResult] = useState<{ username: string; planName: string; cost: number; currency: string } | null>(null)
+  const [result, setResult] = useState<{
+    username: string
+    planName: string
+    cost: number
+    currency: string
+  } | null>(null)
   const [copied, setCopied] = useState(false)
 
   const { data: plans = [] } = useQuery({
@@ -290,10 +331,12 @@ export default function QuickToken() {
 
   const mutation = useMutation({
     mutationFn: () =>
-      api.post('/tokens/generate', {
-        planId: Number(planId),
-        count: 1,
-      }).then((r) => r.data),
+      api
+        .post('/tokens/generate', {
+          planId: Number(planId),
+          count: 1,
+        })
+        .then((r) => r.data),
     onSuccess: (data) => {
       const plan = plans.find((p) => String(p.id) === planId)
       setResult({
@@ -345,9 +388,7 @@ export default function QuickToken() {
           // Step 1: Select plan and generate
           <div className="space-y-4 pt-4">
             <div>
-              <label className="text-sm font-medium text-foreground mb-2 block">
-                Select Plan
-              </label>
+              <label className="text-sm font-medium text-foreground mb-2 block">Select Plan</label>
               <Select value={planId} onValueChange={setPlanId}>
                 <SelectTrigger className="h-14 text-base">
                   <SelectValue placeholder="Choose a WiFi plan..." />
@@ -428,11 +469,7 @@ export default function QuickToken() {
                 className="h-14 flex-col gap-1 text-xs"
                 onClick={copyToClipboard}
               >
-                {copied ? (
-                  <Check className="h-5 w-5 text-success" />
-                ) : (
-                  <Copy className="h-5 w-5" />
-                )}
+                {copied ? <Check className="h-5 w-5 text-success" /> : <Copy className="h-5 w-5" />}
                 {copied ? 'Copied!' : 'Copy Token'}
               </Button>
 
@@ -445,11 +482,7 @@ export default function QuickToken() {
               </Button>
             </div>
 
-            <Button
-              variant="outline"
-              className="w-full h-12"
-              onClick={reset}
-            >
+            <Button variant="outline" className="w-full h-12" onClick={reset}>
               Generate Another Token
             </Button>
 
@@ -476,16 +509,17 @@ export default function QuickToken() {
 > Simplified dashboard for operators — large touch targets, single most important stat front and center.
 
 ### `packages/web/src/pages/OperatorDashboard.tsx`
+
 ```tsx
 import { useLiveStats } from '../hooks/useLiveStats'
 import { useLiveSessions } from '../hooks/useLiveSessions'
-import { useAuthStore } from '../stores/auth.store'
+import { useAuth } from '@/stores/auth.store'
 import { Wifi, Users, DollarSign, Zap } from 'lucide-react'
-import { formatCurrency } from '../lib/utils'
+import { formatCurrency } from '@/lib/utils'
 import { Link } from 'react-router-dom'
 
 export default function OperatorDashboard() {
-  const user = useAuthStore((s) => s.user)
+  const user = useAuth((s) => s.user)
   const { global, branches, loading } = useLiveStats()
   const { sessions } = useLiveSessions()
 
@@ -511,11 +545,13 @@ export default function OperatorDashboard() {
               {myBranch?.name ?? 'Branch Dashboard'}
             </p>
           </div>
-          <span className={`text-xs px-2 py-1 rounded-full ${
-            stats.status === 'online'
-              ? 'bg-green-500/20 text-green-200'
-              : 'bg-yellow-500/20 text-yellow-200'
-          }`}>
+          <span
+            className={`text-xs px-2 py-1 rounded-full ${
+              stats.status === 'online'
+                ? 'bg-green-500/20 text-green-200'
+                : 'bg-yellow-500/20 text-yellow-200'
+            }`}
+          >
             {stats.status}
           </span>
         </div>
@@ -602,14 +638,15 @@ export default function OperatorDashboard() {
 > Operators see the simplified mobile dashboard. Admins see the full desktop dashboard.
 
 ### Update `packages/web/src/App.tsx` — smart redirect:
+
 ```tsx
-import { useAuthStore } from './stores/auth.store'
+import { useAuth } from './stores/auth.store'
 import Dashboard from './pages/Dashboard'
 import OperatorDashboard from './pages/OperatorDashboard'
 import QuickToken from './pages/QuickToken'
 
 function HomeLanding() {
-  const user = useAuthStore((s) => s.user)
+  const user = useAuth((s) => s.user)
   const isMobileOperator = ['operator', 'branchmanager'].includes(user?.role ?? '')
   const isMobile = window.innerWidth < 768
 
@@ -629,9 +666,10 @@ function HomeLanding() {
 ## Task 8.8 — Mobile Responsive Fixes
 
 ### Add mobile sidebar toggle to `packages/web/src/components/TopBar.tsx`:
+
 ```tsx
 import { Menu } from 'lucide-react'
-import { useUIStore } from '../stores/ui.store'
+import { useUIStore } from '@/stores/ui.store'
 
 // Add to TopBar left side before page title:
 const { sidebarOpen, setSidebarOpen } = useUIStore()
@@ -646,8 +684,9 @@ const { sidebarOpen, setSidebarOpen } = useUIStore()
 ```
 
 ### Ensure AppShell sidebar closes on mobile nav click — update `packages/web/src/components/Sidebar.tsx`:
+
 ```tsx
-import { useUIStore } from '../stores/ui.store'
+import { useUIStore } from '@/stores/ui.store'
 
 // In the NavLink onClick handler (for mobile):
 const { setSidebarOpen } = useUIStore()
@@ -663,6 +702,7 @@ onClick={() => {
 ## Task 8.9 — CSS: Mobile-First Utilities
 
 ### Add to `packages/web/src/index.css` — bottom of file:
+
 ```css
 /* ── Mobile utilities ─────────────────────────── */
 @media (max-width: 768px) {
@@ -717,6 +757,7 @@ onClick={() => {
 ## Task 8.10 — PWA Update Notification
 
 ### `packages/web/src/components/UpdateBanner.tsx`
+
 ```tsx
 import { useRegisterSW } from 'virtual:pwa-register/react'
 import { Button } from './ui/button'
@@ -731,9 +772,11 @@ export function UpdateBanner() {
   if (!needRefresh) return null
 
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50
+    <div
+      className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50
                     bg-card border border-border rounded-xl shadow-lg px-4 py-3
-                    flex items-center gap-3 text-sm whitespace-nowrap">
+                    flex items-center gap-3 text-sm whitespace-nowrap"
+    >
       <p className="text-foreground">New version available</p>
       <Button size="sm" onClick={() => updateServiceWorker(true)}>
         <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
@@ -745,13 +788,15 @@ export function UpdateBanner() {
 ```
 
 ### Add to AppShell:
+
 ```tsx
 import { UpdateBanner } from './UpdateBanner'
 // Add alongside InstallBanner:
-<UpdateBanner />
+;<UpdateBanner />
 ```
 
 ### Add types for virtual:pwa-register — `packages/web/src/vite-env.d.ts`:
+
 ```typescript
 /// <reference types="vite/client" />
 /// <reference types="vite-plugin-pwa/react" />
@@ -762,6 +807,7 @@ import { UpdateBanner } from './UpdateBanner'
 ## Task 8.11 — Manifest Meta Tags in index.html
 
 ### Update `packages/web/index.html`:
+
 ```html
 <!DOCTYPE html>
 <html lang="en" class="dark">
@@ -790,6 +836,7 @@ import { UpdateBanner } from './UpdateBanner'
 ## Task 8.12 — Integration: Quick Token in Sidebar
 
 ### Update Sidebar navItems — add at top for operators:
+
 ```typescript
 { href: '/quick', label: 'Quick Token', icon: Zap, roles: ['operator', 'branchmanager'] },
 ```

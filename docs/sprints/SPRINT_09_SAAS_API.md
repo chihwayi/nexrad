@@ -1,11 +1,15 @@
 # Sprint 9 — SaaS Multi-Tenant & Public REST API
+
 **Duration:** 5 days | **Goal:** Full multi-tenant isolation enforcement, public API with API key auth, webhook delivery, super-admin tenant management UI, org self-service settings, and usage-based billing groundwork.
+
+> **AI ASSISTANT:** Before implementing this sprint, read `docs/GROUND_TRUTH.md` for canonical component APIs, import paths, and store names. Sprint docs may conflict — GROUND_TRUTH.md wins.
 
 > After this sprint: NexRAD can serve multiple organizations on the same instance. Each org is isolated. Super-admins can manage tenants. Developers can integrate via REST API with API keys. This is the foundation for SaaS.
 
 ---
 
 ## Prerequisites
+
 - Sprint 0–8 sign-off checklists all ✓
 - `nx_organizations`, `nx_api_keys`, `nx_audit_log` tables exist (Migration 002)
 - Redis running (for API key cache)
@@ -24,6 +28,7 @@ grep -n "FROM nx_tokens\|FROM nx_branches\|FROM nx_users\|FROM nx_billing_plans"
 ```
 
 ### Checklist — verify each service file has org_id scoping:
+
 - [ ] `token.service.ts` — all queries include `org_id = ?`
 - [ ] `branch.service.ts` — all queries include `org_id = ?`
 - [ ] `user.service.ts` — all queries include `org_id = ?`
@@ -39,6 +44,7 @@ grep -n "FROM nx_tokens\|FROM nx_branches\|FROM nx_users\|FROM nx_billing_plans"
 ## Task 9.2 — Organization Service (full CRUD for superadmin)
 
 ### `packages/api/src/modules/organizations/org.service.ts`
+
 ```typescript
 import { query, queryOne } from '../../db/mysql.js'
 
@@ -75,20 +81,20 @@ export async function listOrgs(): Promise<Organization[]> {
 }
 
 export async function getOrg(id: number): Promise<Organization | null> {
-  return queryOne<Organization>(`
+  return queryOne<Organization>(
+    `
     SELECT id, name, slug, commission_rate AS commissionRate,
            logo_url AS logoUrl, currency, timezone,
            voucher_footer AS voucherFooter, is_active AS isActive, created_at AS createdAt
     FROM nx_organizations
     WHERE id = ?
-  `, [id])
+  `,
+    [id]
+  )
 }
 
 export async function getOrgBySlug(slug: string): Promise<Organization | null> {
-  return queryOne<Organization>(
-    'SELECT * FROM nx_organizations WHERE slug = ?',
-    [slug]
-  )
+  return queryOne<Organization>('SELECT * FROM nx_organizations WHERE slug = ?', [slug])
 }
 
 export async function createOrg(input: {
@@ -105,23 +111,29 @@ export async function createOrg(input: {
   const hash = await bcrypt.hash(input.adminPassword, 12)
 
   // Create org
-  const [orgResult] = await query<{ insertId: number }>(`
+  const [orgResult] = await query<{ insertId: number }>(
+    `
     INSERT INTO nx_organizations (name, slug, commission_rate, currency, timezone)
     VALUES (?, ?, ?, ?, ?)
-  `, [
-    input.name,
-    input.slug,
-    input.commissionRate ?? 0.10,
-    input.currency ?? 'USD',
-    input.timezone ?? 'UTC',
-  ])
+  `,
+    [
+      input.name,
+      input.slug,
+      input.commissionRate ?? 0.1,
+      input.currency ?? 'USD',
+      input.timezone ?? 'UTC',
+    ]
+  )
   const orgId = (orgResult as any).insertId
 
   // Create org admin user
-  await query(`
+  await query(
+    `
     INSERT INTO nx_users (org_id, username, email, password, role)
     VALUES (?, ?, ?, ?, 'orgadmin')
-  `, [orgId, input.adminUsername, input.adminEmail ?? null, hash])
+  `,
+    [orgId, input.adminUsername, input.adminEmail ?? null, hash]
+  )
 
   return getOrg(orgId) as Promise<Organization>
 }
@@ -141,13 +153,34 @@ export async function updateOrg(
   const fields: string[] = []
   const values: unknown[] = []
 
-  if (updates.name !== undefined) { fields.push('name = ?'); values.push(updates.name) }
-  if (updates.commissionRate !== undefined) { fields.push('commission_rate = ?'); values.push(updates.commissionRate) }
-  if (updates.currency !== undefined) { fields.push('currency = ?'); values.push(updates.currency) }
-  if (updates.timezone !== undefined) { fields.push('timezone = ?'); values.push(updates.timezone) }
-  if (updates.voucherFooter !== undefined) { fields.push('voucher_footer = ?'); values.push(updates.voucherFooter) }
-  if (updates.logoUrl !== undefined) { fields.push('logo_url = ?'); values.push(updates.logoUrl) }
-  if (updates.isActive !== undefined) { fields.push('is_active = ?'); values.push(updates.isActive ? 1 : 0) }
+  if (updates.name !== undefined) {
+    fields.push('name = ?')
+    values.push(updates.name)
+  }
+  if (updates.commissionRate !== undefined) {
+    fields.push('commission_rate = ?')
+    values.push(updates.commissionRate)
+  }
+  if (updates.currency !== undefined) {
+    fields.push('currency = ?')
+    values.push(updates.currency)
+  }
+  if (updates.timezone !== undefined) {
+    fields.push('timezone = ?')
+    values.push(updates.timezone)
+  }
+  if (updates.voucherFooter !== undefined) {
+    fields.push('voucher_footer = ?')
+    values.push(updates.voucherFooter)
+  }
+  if (updates.logoUrl !== undefined) {
+    fields.push('logo_url = ?')
+    values.push(updates.logoUrl)
+  }
+  if (updates.isActive !== undefined) {
+    fields.push('is_active = ?')
+    values.push(updates.isActive ? 1 : 0)
+  }
 
   if (!fields.length) return getOrg(id)
   values.push(id)
@@ -161,6 +194,7 @@ export async function updateOrg(
 ## Task 9.3 — Organization Routes (superadmin + self-service)
 
 ### `packages/api/src/modules/organizations/org.routes.ts`
+
 ```typescript
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
@@ -169,8 +203,12 @@ import { listOrgs, getOrg, createOrg, updateOrg } from './org.service.js'
 
 const CreateOrgSchema = z.object({
   name: z.string().min(2).max(100),
-  slug: z.string().min(2).max(50).regex(/^[a-z0-9-]+$/),
-  commissionRate: z.number().min(0).max(1).default(0.10),
+  slug: z
+    .string()
+    .min(2)
+    .max(50)
+    .regex(/^[a-z0-9-]+$/),
+  commissionRate: z.number().min(0).max(1).default(0.1),
   currency: z.string().length(3).default('USD'),
   timezone: z.string().default('UTC'),
   adminUsername: z.string().min(3).max(50),
@@ -227,18 +265,17 @@ export async function orgRoutes(app: FastifyInstance) {
   )
 
   // Any org admin: update their own org settings
-  app.patch(
-    '/orgs/me',
-    { preHandler: requireRole('orgadmin') },
-    async (req, reply) => {
-      // Restrict what org admins can self-update (no commissionRate or isActive)
-      const allowed = UpdateOrgSchema.pick({
-        name: true, timezone: true, currency: true, voucherFooter: true,
-      }).parse(req.body)
-      const org = await updateOrg(req.user!.orgId, allowed)
-      return org
-    }
-  )
+  app.patch('/orgs/me', { preHandler: requireRole('orgadmin') }, async (req, reply) => {
+    // Restrict what org admins can self-update (no commissionRate or isActive)
+    const allowed = UpdateOrgSchema.pick({
+      name: true,
+      timezone: true,
+      currency: true,
+      voucherFooter: true,
+    }).parse(req.body)
+    const org = await updateOrg(req.user!.orgId, allowed)
+    return org
+  })
 
   // Any authenticated user: get their org
   app.get('/orgs/me', async (req) => {
@@ -248,6 +285,7 @@ export async function orgRoutes(app: FastifyInstance) {
 ```
 
 ### Register in `packages/api/src/app.ts`:
+
 ```typescript
 import { orgRoutes } from './modules/organizations/org.routes.js'
 await app.register(orgRoutes, { prefix: '/api' })
@@ -258,6 +296,7 @@ await app.register(orgRoutes, { prefix: '/api' })
 ## Task 9.4 — API Key Service
 
 ### `packages/api/src/modules/apikeys/apikey.service.ts`
+
 ```typescript
 import { randomBytes, createHash } from 'crypto'
 import { query, queryOne } from '../../db/mysql.js'
@@ -276,7 +315,7 @@ export interface ApiKey {
   createdByUsername?: string
 }
 
-const CACHE_TTL = 300  // 5 minutes
+const CACHE_TTL = 300 // 5 minutes
 
 function hashKey(rawKey: string): string {
   return createHash('sha256').update(rawKey).digest('hex')
@@ -293,24 +332,27 @@ export async function generateApiKey(opts: {
   expiresAt?: string
   createdBy: number
 }): Promise<{ apiKey: ApiKey; rawKey: string }> {
-  const prefix = randomBytes(4).toString('hex').toUpperCase()  // 8 chars
-  const secret = randomBytes(32).toString('hex')               // 64 chars
+  const prefix = randomBytes(4).toString('hex').toUpperCase() // 8 chars
+  const secret = randomBytes(32).toString('hex') // 64 chars
   const rawKey = `nxk_${prefix}_${secret}`
   const keyHash = hashKey(rawKey)
 
-  const [result] = await query<{ insertId: number }>(`
+  const [result] = await query<{ insertId: number }>(
+    `
     INSERT INTO nx_api_keys
       (org_id, name, key_hash, key_prefix, scopes, expires_at, created_by)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `, [
-    opts.orgId,
-    opts.name,
-    keyHash,
-    prefix,
-    JSON.stringify(opts.scopes),
-    opts.expiresAt ?? null,
-    opts.createdBy,
-  ])
+  `,
+    [
+      opts.orgId,
+      opts.name,
+      keyHash,
+      prefix,
+      JSON.stringify(opts.scopes),
+      opts.expiresAt ?? null,
+      opts.createdBy,
+    ]
+  )
 
   const apiKey = await getApiKey(opts.orgId, (result as any).insertId)
   return { apiKey: apiKey!, rawKey }
@@ -330,7 +372,7 @@ export async function validateApiKey(rawKey: string): Promise<{
   const cached = await redis.get(cacheKey)
   if (cached) {
     const parsed = JSON.parse(cached)
-    if (!parsed) return null  // cached negative result
+    if (!parsed) return null // cached negative result
     return parsed
   }
 
@@ -340,14 +382,17 @@ export async function validateApiKey(rawKey: string): Promise<{
     scopes: string
     expires_at: string | null
     is_active: boolean
-  }>(`
+  }>(
+    `
     SELECT id, org_id, scopes, expires_at, is_active
     FROM nx_api_keys
     WHERE key_hash = ?
-  `, [keyHash])
+  `,
+    [keyHash]
+  )
 
   if (!key || !key.is_active) {
-    await redis.setEx(cacheKey, 60, JSON.stringify(null))  // cache miss for 60s
+    await redis.setEx(cacheKey, 60, JSON.stringify(null)) // cache miss for 60s
     return null
   }
 
@@ -372,7 +417,8 @@ export async function validateApiKey(rawKey: string): Promise<{
 }
 
 export async function listApiKeys(orgId: number): Promise<ApiKey[]> {
-  return query<ApiKey>(`
+  return query<ApiKey>(
+    `
     SELECT k.id, k.org_id AS orgId, k.name, k.key_prefix AS keyPrefix,
            k.scopes, k.last_used AS lastUsed, k.expires_at AS expiresAt,
            k.is_active AS isActive, k.created_at AS createdAt,
@@ -381,26 +427,31 @@ export async function listApiKeys(orgId: number): Promise<ApiKey[]> {
     LEFT JOIN nx_users u ON u.id = k.created_by
     WHERE k.org_id = ?
     ORDER BY k.created_at DESC
-  `, [orgId])
+  `,
+    [orgId]
+  )
 }
 
 export async function getApiKey(orgId: number, id: number): Promise<ApiKey | null> {
-  const [key] = await query<ApiKey>(`
+  const [key] = await query<ApiKey>(
+    `
     SELECT k.id, k.org_id AS orgId, k.name, k.key_prefix AS keyPrefix,
            k.scopes, k.last_used AS lastUsed, k.expires_at AS expiresAt,
            k.is_active AS isActive, k.created_at AS createdAt
     FROM nx_api_keys k
     WHERE k.id = ? AND k.org_id = ?
-  `, [id, orgId])
+  `,
+    [id, orgId]
+  )
   return key ?? null
 }
 
 export async function revokeApiKey(orgId: number, id: number): Promise<void> {
   await query('UPDATE nx_api_keys SET is_active = 0 WHERE id = ? AND org_id = ?', [id, orgId])
   // Invalidate cache
-  const [key] = await query<{ key_hash: string }>(
-    'SELECT key_hash FROM nx_api_keys WHERE id = ?', [id]
-  )
+  const [key] = await query<{ key_hash: string }>('SELECT key_hash FROM nx_api_keys WHERE id = ?', [
+    id,
+  ])
   if (key) await redis.del(`apikey:${key.key_hash}`)
 }
 ```
@@ -410,6 +461,7 @@ export async function revokeApiKey(orgId: number, id: number): Promise<void> {
 ## Task 9.5 — API Key Auth Middleware
 
 ### Add to `packages/api/src/modules/auth/auth.middleware.ts`:
+
 ```typescript
 import { validateApiKey } from '../apikeys/apikey.service.js'
 
@@ -418,10 +470,7 @@ import { validateApiKey } from '../apikeys/apikey.service.js'
  * API keys are used by external integrations.
  * JWT is used by the web app.
  */
-export async function authenticateAny(
-  request: FastifyRequest,
-  reply: FastifyReply
-) {
+export async function authenticateAny(request: FastifyRequest, reply: FastifyReply) {
   const authHeader = request.headers.authorization ?? ''
 
   if (authHeader.startsWith('Bearer nxk_')) {
@@ -464,6 +513,7 @@ export function requireScope(scope: string) {
 ## Task 9.6 — API Key Routes
 
 ### `packages/api/src/modules/apikeys/apikey.routes.ts`
+
 ```typescript
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
@@ -513,6 +563,7 @@ export async function apikeyRoutes(app: FastifyInstance) {
 ```
 
 ### Register in `packages/api/src/app.ts`:
+
 ```typescript
 import { apikeyRoutes } from './modules/apikeys/apikey.routes.js'
 await app.register(apikeyRoutes, { prefix: '/api' })
@@ -525,6 +576,7 @@ await app.register(apikeyRoutes, { prefix: '/api' })
 > These are the externally-consumable endpoints for integrations. They use `authenticateAny` so both JWT and API keys work.
 
 ### `packages/api/src/modules/public/public.routes.ts`
+
 ```typescript
 import type { FastifyInstance } from 'fastify'
 import { authenticateAny, requireScope } from '../auth/auth.middleware.js'
@@ -548,17 +600,21 @@ export async function publicApiRoutes(app: FastifyInstance) {
   })
 
   // POST /v1/tokens — generate tokens
-  app.post('/v1/tokens', { preHandler: requireScope('tokens:write') as any }, async (req, reply) => {
-    const { planId, count = 1, prefix } = req.body as any
-    const result = await generateTokens({
-      orgId: req.user!.orgId,
-      planId: Number(planId),
-      count: Math.min(Number(count), 100),
-      prefix,
-      createdBy: 0,
-    })
-    return reply.status(201).send(result)
-  })
+  app.post(
+    '/v1/tokens',
+    { preHandler: requireScope('tokens:write') as any },
+    async (req, reply) => {
+      const { planId, count = 1, prefix } = req.body as any
+      const result = await generateTokens({
+        orgId: req.user!.orgId,
+        planId: Number(planId),
+        count: Math.min(Number(count), 100),
+        prefix,
+        createdBy: 0,
+      })
+      return reply.status(201).send(result)
+    }
+  )
 
   // GET /v1/stats — global stats
   app.get('/v1/stats', { preHandler: requireScope('sessions:read') as any }, async (req) => {
@@ -578,6 +634,7 @@ export async function publicApiRoutes(app: FastifyInstance) {
 ```
 
 ### Register in `packages/api/src/app.ts`:
+
 ```typescript
 import { publicApiRoutes } from './modules/public/public.routes.js'
 await app.register(publicApiRoutes, { prefix: '/api' })
@@ -588,16 +645,17 @@ await app.register(publicApiRoutes, { prefix: '/api' })
 ## Task 9.8 — Super-Admin UI: Tenants Page
 
 ### `packages/web/src/pages/Tenants.tsx`
+
 ```tsx
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../lib/api'
-import { PageHeader } from '../components/PageHeader'
-import { DataTable } from '../components/DataTable'
-import { Button } from '../components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
-import { Input } from '../components/ui/input'
-import { Label } from '../components/ui/label'
+import { api } from '@/lib/api'
+import { PageHeader } from '@/components/shared/PageHeader'
+import { DataTable } from '@/components/shared/DataTable'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Plus, Building2, Users2, GitBranch, Ticket } from 'lucide-react'
 
 interface Org {
@@ -632,62 +690,62 @@ export default function Tenants() {
     {
       key: 'name',
       header: 'Organization',
-      render: (v: string, r: Org) => (
+      cell: (row: Org) => (
         <div>
-          <p className="font-semibold">{v}</p>
-          <p className="text-xs text-muted-foreground font-mono">{r.slug}</p>
+          <p className="font-semibold">{row.name}</p>
+          <p className="text-xs text-muted-foreground font-mono">{row.slug}</p>
         </div>
       ),
     },
     {
       key: 'commissionRate',
       header: 'Commission',
-      render: (v: number) => `${(v * 100).toFixed(0)}%`,
+      cell: (row: Org) => `${(row.commissionRate * 100).toFixed(0)}%`,
     },
     { key: 'currency', header: 'Currency' },
     {
       key: 'userCount',
       header: 'Users',
-      render: (v: number) => (
+      cell: (row: Org) => (
         <span className="flex items-center gap-1.5 text-sm">
-          <Users2 className="h-3.5 w-3.5 text-muted-foreground" /> {v}
+          <Users2 className="h-3.5 w-3.5 text-muted-foreground" /> {row.userCount}
         </span>
       ),
     },
     {
       key: 'branchCount',
       header: 'Branches',
-      render: (v: number) => (
+      cell: (row: Org) => (
         <span className="flex items-center gap-1.5 text-sm">
-          <GitBranch className="h-3.5 w-3.5 text-muted-foreground" /> {v}
+          <GitBranch className="h-3.5 w-3.5 text-muted-foreground" /> {row.branchCount}
         </span>
       ),
     },
     {
       key: 'tokenCount',
       header: 'Tokens',
-      render: (v: number) => (
+      cell: (row: Org) => (
         <span className="flex items-center gap-1.5 text-sm">
-          <Ticket className="h-3.5 w-3.5 text-muted-foreground" /> {v}
+          <Ticket className="h-3.5 w-3.5 text-muted-foreground" /> {row.tokenCount}
         </span>
       ),
     },
     {
       key: 'isActive',
       header: 'Status',
-      render: (v: boolean, r: Org) => (
+      cell: (row: Org) => (
         <button
-          onClick={() => toggleMutation.mutate({ id: r.id, isActive: v })}
-          className={`${v ? 'badge-online' : 'badge-offline'} cursor-pointer hover:opacity-80`}
+          onClick={() => toggleMutation.mutate({ id: row.id, isActive: row.isActive })}
+          className={`${row.isActive ? 'badge-online' : 'badge-offline'} cursor-pointer hover:opacity-80`}
         >
-          {v ? 'Active' : 'Suspended'}
+          {row.isActive ? 'Active' : 'Suspended'}
         </button>
       ),
     },
     {
       key: 'createdAt',
       header: 'Created',
-      render: (v: string) => new Date(v).toLocaleDateString(),
+      cell: (row: Org) => new Date(row.createdAt).toLocaleDateString(),
     },
   ]
 
@@ -728,10 +786,10 @@ export default function Tenants() {
 
       <DataTable
         data={orgs}
-        columns={columns as any}
-        keyField="id"
+        columns={columns}
+        rowKey={(row) => row.id}
         loading={isLoading}
-        emptyMessage="No tenants. Create the first organization."
+        emptyText="No tenants. Create the first organization."
       />
 
       <AddTenantDialog
@@ -746,29 +804,45 @@ export default function Tenants() {
   )
 }
 
-function AddTenantDialog({ open, onClose, onCreated }: {
-  open: boolean; onClose: () => void; onCreated: () => void
+function AddTenantDialog({
+  open,
+  onClose,
+  onCreated,
+}: {
+  open: boolean
+  onClose: () => void
+  onCreated: () => void
 }) {
   const [form, setForm] = useState({
-    name: '', slug: '', currency: 'USD', commissionRate: '0.10',
-    adminUsername: '', adminPassword: '', adminEmail: '',
+    name: '',
+    slug: '',
+    currency: 'USD',
+    commissionRate: '0.10',
+    adminUsername: '',
+    adminPassword: '',
+    adminEmail: '',
   })
   const [error, setError] = useState<string | null>(null)
 
   const autoSlug = (name: string) =>
-    name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
 
   const mutation = useMutation({
     mutationFn: (data: typeof form) =>
-      api.post('/orgs', {
-        name: data.name,
-        slug: data.slug,
-        currency: data.currency,
-        commissionRate: Number(data.commissionRate),
-        adminUsername: data.adminUsername,
-        adminPassword: data.adminPassword,
-        adminEmail: data.adminEmail || undefined,
-      }).then((r) => r.data),
+      api
+        .post('/orgs', {
+          name: data.name,
+          slug: data.slug,
+          currency: data.currency,
+          commissionRate: Number(data.commissionRate),
+          adminUsername: data.adminUsername,
+          adminPassword: data.adminPassword,
+          adminEmail: data.adminEmail || undefined,
+        })
+        .then((r) => r.data),
     onSuccess: onCreated,
     onError: (e: any) => setError(e.response?.data?.message ?? 'Failed to create tenant'),
   })
@@ -776,14 +850,18 @@ function AddTenantDialog({ open, onClose, onCreated }: {
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>New Tenant Organization</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>New Tenant Organization</DialogTitle>
+        </DialogHeader>
         <div className="space-y-3 py-2">
           <div>
             <Label>Organization Name *</Label>
             <Input
               placeholder="Acme WiFi Ltd"
               value={form.name}
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value, slug: autoSlug(e.target.value) }))}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, name: e.target.value, slug: autoSlug(e.target.value) }))
+              }
             />
           </div>
           <div>
@@ -797,32 +875,56 @@ function AddTenantDialog({ open, onClose, onCreated }: {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Currency</Label>
-              <Input value={form.currency} maxLength={3}
-                onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value.toUpperCase() }))} />
+              <Input
+                value={form.currency}
+                maxLength={3}
+                onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value.toUpperCase() }))}
+              />
             </div>
             <div>
               <Label>Commission Rate</Label>
-              <Input type="number" min="0" max="1" step="0.01" value={form.commissionRate}
-                onChange={(e) => setForm((f) => ({ ...f, commissionRate: e.target.value }))} />
+              <Input
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                value={form.commissionRate}
+                onChange={(e) => setForm((f) => ({ ...f, commissionRate: e.target.value }))}
+              />
             </div>
           </div>
           <div className="border-t border-border pt-3">
             <p className="text-xs text-muted-foreground mb-2 font-medium">Initial Admin Account</p>
             <div className="space-y-2">
-              <Input placeholder="Admin username *" value={form.adminUsername}
-                onChange={(e) => setForm((f) => ({ ...f, adminUsername: e.target.value }))} />
-              <Input type="password" placeholder="Admin password * (min 8)" value={form.adminPassword}
-                onChange={(e) => setForm((f) => ({ ...f, adminPassword: e.target.value }))} />
-              <Input type="email" placeholder="Admin email (optional)" value={form.adminEmail}
-                onChange={(e) => setForm((f) => ({ ...f, adminEmail: e.target.value }))} />
+              <Input
+                placeholder="Admin username *"
+                value={form.adminUsername}
+                onChange={(e) => setForm((f) => ({ ...f, adminUsername: e.target.value }))}
+              />
+              <Input
+                type="password"
+                placeholder="Admin password * (min 8)"
+                value={form.adminPassword}
+                onChange={(e) => setForm((f) => ({ ...f, adminPassword: e.target.value }))}
+              />
+              <Input
+                type="email"
+                placeholder="Admin email (optional)"
+                value={form.adminEmail}
+                onChange={(e) => setForm((f) => ({ ...f, adminEmail: e.target.value }))}
+              />
             </div>
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={onClose}>Cancel</Button>
+            <Button variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
             <Button
               onClick={() => mutation.mutate(form)}
-              disabled={mutation.isPending || !form.name || !form.adminUsername || !form.adminPassword}
+              disabled={
+                mutation.isPending || !form.name || !form.adminUsername || !form.adminPassword
+              }
             >
               {mutation.isPending ? 'Creating...' : 'Create Tenant'}
             </Button>
@@ -839,16 +941,17 @@ function AddTenantDialog({ open, onClose, onCreated }: {
 ## Task 9.9 — Org Settings Page (self-service)
 
 ### `packages/web/src/pages/OrgSettings.tsx`
+
 ```tsx
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../lib/api'
-import { PageHeader } from '../components/PageHeader'
-import { Button } from '../components/ui/button'
-import { Input } from '../components/ui/input'
-import { Label } from '../components/ui/label'
-import { Textarea } from '../components/ui/textarea'
-import { DataTable } from '../components/DataTable'
+import { api } from '@/lib/api'
+import { PageHeader } from '@/components/shared/PageHeader'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { DataTable } from '@/components/shared/DataTable'
 import { Plus, Key, Trash2, Copy, Check } from 'lucide-react'
 
 export default function OrgSettings() {
@@ -915,15 +1018,21 @@ export default function OrgSettings() {
     {
       key: 'keyPrefix',
       header: 'Prefix',
-      render: (v: string) => <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">nxk_{v}_...</span>,
+      cell: (row: ApiKey) => (
+        <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">
+          nxk_{row.keyPrefix}_...
+        </span>
+      ),
     },
     {
       key: 'scopes',
       header: 'Scopes',
-      render: (v: string[]) => (
+      cell: (row: ApiKey) => (
         <div className="flex gap-1 flex-wrap">
-          {(v ?? []).map((s) => (
-            <span key={s} className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">{s}</span>
+          {(row.scopes ?? []).map((s) => (
+            <span key={s} className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">
+              {s}
+            </span>
           ))}
         </div>
       ),
@@ -931,13 +1040,13 @@ export default function OrgSettings() {
     {
       key: 'lastUsed',
       header: 'Last Used',
-      render: (v: string | null) => v ? new Date(v).toLocaleString() : 'Never',
+      cell: (row: ApiKey) => (row.lastUsed ? new Date(row.lastUsed).toLocaleString() : 'Never'),
     },
     {
       key: 'id',
       header: '',
-      render: (id: number) => (
-        <Button variant="ghost" size="sm" onClick={() => revokeKeyMutation.mutate(id)}>
+      cell: (row: ApiKey) => (
+        <Button variant="ghost" size="sm" onClick={() => revokeKeyMutation.mutate(row.id)}>
           <Trash2 className="h-4 w-4 text-destructive" />
         </Button>
       ),
@@ -956,18 +1065,27 @@ export default function OrgSettings() {
         <div className="kpi-card space-y-4 max-w-lg">
           <div>
             <Label>Organization Name</Label>
-            <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+            <Input
+              value={form.name}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Currency</Label>
-              <Input maxLength={3} value={form.currency}
-                onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value.toUpperCase() }))} />
+              <Input
+                maxLength={3}
+                value={form.currency}
+                onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value.toUpperCase() }))}
+              />
             </div>
             <div>
               <Label>Timezone</Label>
-              <Input value={form.timezone} placeholder="UTC"
-                onChange={(e) => setForm((f) => ({ ...f, timezone: e.target.value }))} />
+              <Input
+                value={form.timezone}
+                placeholder="UTC"
+                onChange={(e) => setForm((f) => ({ ...f, timezone: e.target.value }))}
+              />
             </div>
           </div>
           <div>
@@ -982,10 +1100,7 @@ export default function OrgSettings() {
               Appears at the bottom of printed vouchers.
             </p>
           </div>
-          <Button
-            onClick={() => updateMutation.mutate(form)}
-            disabled={updateMutation.isPending}
-          >
+          <Button onClick={() => updateMutation.mutate(form)} disabled={updateMutation.isPending}>
             {saved ? '✓ Saved' : updateMutation.isPending ? 'Saving...' : 'Save Changes'}
           </Button>
         </div>
@@ -999,10 +1114,12 @@ export default function OrgSettings() {
           </h2>
           <Button
             size="sm"
-            onClick={() => createKeyMutation.mutate({
-              name: `Key ${new Date().toLocaleDateString()}`,
-              scopes: ['tokens:read', 'sessions:read', 'branches:read', 'reports:read'],
-            })}
+            onClick={() =>
+              createKeyMutation.mutate({
+                name: `Key ${new Date().toLocaleDateString()}`,
+                scopes: ['tokens:read', 'sessions:read', 'branches:read', 'reports:read'],
+              })
+            }
             disabled={createKeyMutation.isPending}
           >
             <Plus className="h-4 w-4 mr-2" /> Generate Key
@@ -1031,15 +1148,26 @@ export default function OrgSettings() {
         <DataTable
           data={apiKeys}
           columns={keyColumns as any}
-          keyField="id"
+          rowKey={(row) => row.id}
           loading={false}
-          emptyMessage="No API keys. Generate one to integrate with external systems."
+          emptyText="No API keys. Generate one to integrate with external systems."
         />
 
         <div className="text-xs text-muted-foreground space-y-1">
-          <p><strong>Usage:</strong> Pass the key as <code className="bg-muted px-1 rounded">Authorization: Bearer nxk_...</code></p>
-          <p><strong>Base URL:</strong> <code className="bg-muted px-1 rounded">/api/v1/</code></p>
-          <p>Available endpoints: <code className="bg-muted px-1 rounded">GET /v1/tokens</code>, <code className="bg-muted px-1 rounded">POST /v1/tokens</code>, <code className="bg-muted px-1 rounded">GET /v1/stats</code>, <code className="bg-muted px-1 rounded">GET /v1/sessions</code>, <code className="bg-muted px-1 rounded">GET /v1/branches</code></p>
+          <p>
+            <strong>Usage:</strong> Pass the key as{' '}
+            <code className="bg-muted px-1 rounded">Authorization: Bearer nxk_...</code>
+          </p>
+          <p>
+            <strong>Base URL:</strong> <code className="bg-muted px-1 rounded">/api/v1/</code>
+          </p>
+          <p>
+            Available endpoints: <code className="bg-muted px-1 rounded">GET /v1/tokens</code>,{' '}
+            <code className="bg-muted px-1 rounded">POST /v1/tokens</code>,{' '}
+            <code className="bg-muted px-1 rounded">GET /v1/stats</code>,{' '}
+            <code className="bg-muted px-1 rounded">GET /v1/sessions</code>,{' '}
+            <code className="bg-muted px-1 rounded">GET /v1/branches</code>
+          </p>
         </div>
       </section>
     </div>
@@ -1052,6 +1180,7 @@ export default function OrgSettings() {
 ## Task 9.10 — Sidebar Nav Updates
 
 ### Update Sidebar navItems — add Tenants for superadmin, Settings for all:
+
 ```typescript
 // Superadmin only
 { href: '/tenants', label: 'Tenants', icon: Building2, roles: ['superadmin'] },
@@ -1060,6 +1189,7 @@ export default function OrgSettings() {
 ```
 
 ### Update `packages/web/src/App.tsx`:
+
 ```tsx
 import Tenants from './pages/Tenants'
 import OrgSettings from './pages/OrgSettings'
@@ -1073,6 +1203,7 @@ import OrgSettings from './pages/OrgSettings'
 ## Task 9.11 — Integration Tests: Multi-Tenant Isolation
 
 ### `packages/api/src/modules/organizations/__tests__/isolation.test.ts`
+
 ```typescript
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { buildApp } from '../../../app.js'
@@ -1111,7 +1242,7 @@ describe('Multi-tenant isolation', () => {
     org2Id = orgRes.json().id
 
     // Login as org2 admin
-    const org2Username = orgRes.json().adminUsername  // need to store this
+    const org2Username = orgRes.json().adminUsername // need to store this
     // Actually get the username from the creation body
   })
 
@@ -1153,6 +1284,7 @@ describe('Multi-tenant isolation', () => {
 ```
 
 ### `packages/api/src/modules/apikeys/__tests__/apikey.test.ts`
+
 ```typescript
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { buildApp } from '../../../app.js'

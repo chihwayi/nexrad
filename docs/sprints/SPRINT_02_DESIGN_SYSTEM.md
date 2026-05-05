@@ -1,5 +1,8 @@
 # Sprint 2 — Design System & App Shell
+
 **Duration:** 4 days | **Goal:** Complete design system, AppShell (sidebar + topbar), all global components, dark/light theme, responsive layout. Every future page is built inside this shell.
+
+> **AI ASSISTANT:** Before implementing this sprint, read `docs/GROUND_TRUTH.md` for canonical component APIs, import paths, and store names. Sprint docs may conflict — GROUND_TRUTH.md wins.
 
 > Design = the FIRST thing users judge. This sprint must produce a UI that looks like a proper 2025 product, not a CRUD app. Every design decision here is reused across all 80+ components in the app.
 
@@ -8,29 +11,34 @@
 ## Design Language — Read Before Building
 
 ### Colour Philosophy
+
 - **Dark sidebar** always (regardless of theme) — anchors navigation
 - **Light content area** in light mode, **dark content area** in dark mode
 - **Indigo (#6366f1)** is the only brand accent colour — used sparingly for CTAs and active states
 - **Status colours** are semantic: green = live/good, amber = warning/recent, red = error/offline, blue = info
 
 ### Typography
+
 - Font: **Inter** (body) + **JetBrains Mono** (tokens, code)
 - Scale: 2xs / xs / sm / base / lg / xl / 2xl / 3xl — nothing custom
 - Weight: 400 (body) / 500 (label) / 600 (heading) / 700 (kpi value) / 800 (hero number)
 
 ### Spacing
+
 - Use Tailwind's 4px grid exclusively — no custom pixel values
 - Card padding: `p-5` (20px)
 - Section gap: `gap-4` (16px)
 - Page padding: `px-6 py-6`
 
 ### Component Radii
+
 - Cards: `rounded-xl` (12px)
 - Buttons: `rounded-lg` (10px)
 - Badges / chips: `rounded-full`
 - Inputs: `rounded-lg`
 
 ### Motion
+
 - All transitions: 200ms ease-out
 - Hover: `hover:shadow-card-hover` on cards, `hover:bg-muted/30` on rows
 - Fade-in on page load: `animate-fade-in` utility class
@@ -84,7 +92,7 @@ interface UiState {
 export const useUi = create<UiState>()(
   persist(
     (set) => ({
-      theme:       'dark',
+      theme: 'dark',
       sidebarOpen: true,
       setTheme: (theme) => {
         set({ theme })
@@ -98,7 +106,9 @@ export const useUi = create<UiState>()(
 
 function applyTheme(theme: Theme) {
   const root = document.documentElement
-  const dark  = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+  const dark =
+    theme === 'dark' ||
+    (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
   root.classList.toggle('dark', dark)
 }
 
@@ -113,30 +123,39 @@ if (typeof window !== 'undefined') {
 ## Task 2.3 — Shared Components
 
 ### `src/components/shared/StatCard.tsx`
+
 ```tsx
 import { cn } from '@/lib/utils'
 import type { LucideIcon } from 'lucide-react'
 
 interface StatCardProps {
-  label:    string
-  value:    string | number
-  sub?:     string
-  icon?:    LucideIcon
-  colour?:  'default' | 'green' | 'amber' | 'red' | 'blue' | 'purple'
-  trend?:   { value: number; label: string }
+  label: string
+  value: string | number
+  sub?: string
+  icon?: LucideIcon
+  colour?: 'default' | 'green' | 'amber' | 'red' | 'blue' | 'purple'
+  trend?: { value: number; label: string }
   loading?: boolean
 }
 
 const colourMap = {
   default: 'border-border',
-  green:   'border-success',
-  amber:   'border-warning',
-  red:     'border-danger',
-  blue:    'border-info',
-  purple:  'border-purple-500',
+  green: 'border-success',
+  amber: 'border-warning',
+  red: 'border-danger',
+  blue: 'border-info',
+  purple: 'border-purple-500',
 }
 
-export function StatCard({ label, value, sub, icon: Icon, colour = 'default', trend, loading }: StatCardProps) {
+export function StatCard({
+  label,
+  value,
+  sub,
+  icon: Icon,
+  colour = 'default',
+  trend,
+  loading,
+}: StatCardProps) {
   return (
     <div className={cn('kpi-card border-t-4', colourMap[colour])}>
       <div className="flex items-start justify-between">
@@ -156,7 +175,12 @@ export function StatCard({ label, value, sub, icon: Icon, colour = 'default', tr
         <div className="flex items-center gap-2 mt-1">
           {sub && <p className="kpi-sub">{sub}</p>}
           {trend && (
-            <span className={cn('text-xs font-medium', trend.value >= 0 ? 'text-success' : 'text-danger')}>
+            <span
+              className={cn(
+                'text-xs font-medium',
+                trend.value >= 0 ? 'text-success' : 'text-danger'
+              )}
+            >
               {trend.value >= 0 ? '↑' : '↓'} {Math.abs(trend.value)}% {trend.label}
             </span>
           )}
@@ -168,11 +192,12 @@ export function StatCard({ label, value, sub, icon: Icon, colour = 'default', tr
 ```
 
 ### `src/components/shared/PageHeader.tsx`
+
 ```tsx
 interface PageHeaderProps {
-  title:     string
+  title: string
   subtitle?: string
-  actions?:  React.ReactNode
+  actions?: React.ReactNode
 }
 
 export function PageHeader({ title, subtitle, actions }: PageHeaderProps) {
@@ -189,12 +214,13 @@ export function PageHeader({ title, subtitle, actions }: PageHeaderProps) {
 ```
 
 ### `src/components/shared/EmptyState.tsx`
+
 ```tsx
 import type { LucideIcon } from 'lucide-react'
 
 interface EmptyStateProps {
-  icon:    LucideIcon
-  title:   string
+  icon: LucideIcon
+  title: string
   message: string
   action?: React.ReactNode
 }
@@ -216,34 +242,47 @@ export function EmptyState({ icon: Icon, title, message, action }: EmptyStatePro
 ```
 
 ### `src/components/shared/DataTable.tsx`
+
 ```tsx
 import { cn } from '@/lib/utils'
 
 interface Column<T> {
-  key:      keyof T | string
-  header:   string
-  cell?:    (row: T) => React.ReactNode
-  width?:   string
-  align?:   'left' | 'right' | 'center'
+  key: keyof T | string
+  header: string
+  cell?: (row: T) => React.ReactNode
+  width?: string
+  align?: 'left' | 'right' | 'center'
 }
 
 interface DataTableProps<T> {
-  columns:    Column<T>[]
-  data:       T[]
-  loading?:   boolean
+  columns: Column<T>[]
+  data: T[]
+  loading?: boolean
   emptyText?: string
-  rowKey:     (row: T) => string | number
+  rowKey: (row: T) => string | number
 }
 
-export function DataTable<T>({ columns, data, loading, emptyText = 'No data', rowKey }: DataTableProps<T>) {
+export function DataTable<T>({
+  columns,
+  data,
+  loading,
+  emptyText = 'No data',
+  rowKey,
+}: DataTableProps<T>) {
   return (
     <div className="overflow-x-auto rounded-xl border border-border">
       <table className="data-table w-full">
         <thead>
           <tr>
             {columns.map((col) => (
-              <th key={String(col.key)} style={{ width: col.width }}
-                  className={cn(col.align === 'right' && 'text-right', col.align === 'center' && 'text-center')}>
+              <th
+                key={String(col.key)}
+                style={{ width: col.width }}
+                className={cn(
+                  col.align === 'right' && 'text-right',
+                  col.align === 'center' && 'text-center'
+                )}
+              >
                 {col.header}
               </th>
             ))}
@@ -261,13 +300,22 @@ export function DataTable<T>({ columns, data, loading, emptyText = 'No data', ro
               </tr>
             ))
           ) : data.length === 0 ? (
-            <tr><td colSpan={columns.length} className="text-center py-10 text-muted-foreground">{emptyText}</td></tr>
+            <tr>
+              <td colSpan={columns.length} className="text-center py-10 text-muted-foreground">
+                {emptyText}
+              </td>
+            </tr>
           ) : (
             data.map((row) => (
               <tr key={rowKey(row)}>
                 {columns.map((col) => (
-                  <td key={String(col.key)}
-                      className={cn(col.align === 'right' && 'text-right', col.align === 'center' && 'text-center')}>
+                  <td
+                    key={String(col.key)}
+                    className={cn(
+                      col.align === 'right' && 'text-right',
+                      col.align === 'center' && 'text-center'
+                    )}
+                  >
                     {col.cell ? col.cell(row) : String((row as any)[col.key] ?? '')}
                   </td>
                 ))}
@@ -282,6 +330,7 @@ export function DataTable<T>({ columns, data, loading, emptyText = 'No data', ro
 ```
 
 ### `src/lib/utils.ts`
+
 ```typescript
 import { type ClassValue, clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
@@ -313,7 +362,7 @@ export function formatDuration(seconds: number): string {
 export function relativeTime(date: string | null): string {
   if (!date) return 'Never'
   const secs = Math.floor((Date.now() - new Date(date).getTime()) / 1000)
-  if (secs < 60)   return 'Just now'
+  if (secs < 60) return 'Just now'
   if (secs < 3600) return `${Math.floor(secs / 60)}m ago`
   if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`
   return `${Math.floor(secs / 86400)}d ago`
@@ -325,6 +374,7 @@ export function relativeTime(date: string | null): string {
 ## Task 2.4 — App Shell
 
 ### `src/components/layout/AppShell.tsx`
+
 ```tsx
 import { Outlet } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
@@ -341,15 +391,19 @@ export default function AppShell() {
 
       {/* Mobile overlay */}
       {sidebarOpen && (
-        <div className="fixed inset-0 z-20 bg-black/50 lg:hidden"
-             onClick={useUi.getState().toggleSidebar} />
+        <div
+          className="fixed inset-0 z-20 bg-black/50 lg:hidden"
+          onClick={useUi.getState().toggleSidebar}
+        />
       )}
 
       {/* Main content */}
-      <div className={cn(
-        'flex flex-col flex-1 overflow-hidden transition-all duration-200',
-        sidebarOpen ? 'lg:ml-[240px]' : 'ml-0'
-      )}>
+      <div
+        className={cn(
+          'flex flex-col flex-1 overflow-hidden transition-all duration-200',
+          sidebarOpen ? 'lg:ml-[240px]' : 'ml-0'
+        )}
+      >
         <TopBar />
         <main className="flex-1 overflow-y-auto scrollbar-thin">
           <div className="px-6 py-6 max-w-screen-2xl mx-auto animate-fade-in">
@@ -363,28 +417,38 @@ export default function AppShell() {
 ```
 
 ### `src/components/layout/Sidebar.tsx`
+
 ```tsx
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/stores/auth.store'
 import { useUi } from '@/stores/ui.store'
 import { cn } from '@/lib/utils'
 import {
-  LayoutDashboard, GitBranch, Ticket, Activity,
-  BarChart2, Package, Users, Shield, Settings,
-  LogOut, ChevronLeft, Network
+  LayoutDashboard,
+  GitBranch,
+  Ticket,
+  Activity,
+  BarChart2,
+  Package,
+  Users,
+  Shield,
+  Settings,
+  LogOut,
+  ChevronLeft,
+  Network,
 } from 'lucide-react'
 
 const navItems = [
-  { href: '/dashboard',     label: 'Dashboard',   icon: LayoutDashboard },
-  { href: '/sessions',      label: 'Live Sessions', icon: Activity },
-  { href: '/branches',      label: 'Branches',    icon: GitBranch },
-  { href: '/tokens',        label: 'Tokens',      icon: Ticket },
-  { href: '/reports',       label: 'Reports',     icon: BarChart2 },
-  { href: '/plans',         label: 'Plans',       icon: Package },
-  { href: '/wireguard',     label: 'WireGuard',   icon: Network },
-  { href: '/users',         label: 'Users',       icon: Users },
-  { href: '/organizations', label: 'Orgs',        icon: Shield, superadminOnly: true },
-  { href: '/settings',      label: 'Settings',    icon: Settings },
+  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/sessions', label: 'Live Sessions', icon: Activity },
+  { href: '/branches', label: 'Branches', icon: GitBranch },
+  { href: '/tokens', label: 'Tokens', icon: Ticket },
+  { href: '/reports', label: 'Reports', icon: BarChart2 },
+  { href: '/plans', label: 'Plans', icon: Package },
+  { href: '/wireguard', label: 'WireGuard', icon: Network },
+  { href: '/users', label: 'Users', icon: Users },
+  { href: '/organizations', label: 'Orgs', icon: Shield, superadminOnly: true },
+  { href: '/settings', label: 'Settings', icon: Settings },
 ]
 
 export function Sidebar() {
@@ -392,18 +456,18 @@ export function Sidebar() {
   const { sidebarOpen, toggleSidebar } = useUi()
   const navigate = useNavigate()
 
-  const visibleNav = navItems.filter(
-    (item) => !item.superadminOnly || user?.role === 'superadmin'
-  )
+  const visibleNav = navItems.filter((item) => !item.superadminOnly || user?.role === 'superadmin')
 
   return (
-    <aside className={cn(
-      'fixed inset-y-0 left-0 z-30 flex flex-col',
-      'bg-[hsl(var(--sidebar-bg))] border-r border-[hsl(var(--sidebar-border))]',
-      'transition-transform duration-200',
-      'w-[240px]',
-      sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0 lg:w-16'
-    )}>
+    <aside
+      className={cn(
+        'fixed inset-y-0 left-0 z-30 flex flex-col',
+        'bg-[hsl(var(--sidebar-bg))] border-r border-[hsl(var(--sidebar-border))]',
+        'transition-transform duration-200',
+        'w-[240px]',
+        sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0 lg:w-16'
+      )}
+    >
       {/* Logo */}
       <div className="flex items-center gap-3 px-4 h-14 border-b border-[hsl(var(--sidebar-border))]">
         <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
@@ -412,20 +476,30 @@ export function Sidebar() {
         {sidebarOpen && (
           <div className="overflow-hidden">
             <p className="text-sm font-bold text-[hsl(var(--sidebar-fg))]">NexRAD</p>
-            <p className="text-2xs text-[hsl(var(--sidebar-fg)/0.5)]">{user?.orgSlug ?? 'Platform'}</p>
+            <p className="text-2xs text-[hsl(var(--sidebar-fg)/0.5)]">
+              {user?.orgSlug ?? 'Platform'}
+            </p>
           </div>
         )}
-        <button onClick={toggleSidebar}
-                className="ml-auto p-1 rounded text-[hsl(var(--sidebar-fg)/0.5)] hover:text-[hsl(var(--sidebar-fg))] hidden lg:block">
-          <ChevronLeft size={16} className={cn('transition-transform', !sidebarOpen && 'rotate-180')} />
+        <button
+          onClick={toggleSidebar}
+          className="ml-auto p-1 rounded text-[hsl(var(--sidebar-fg)/0.5)] hover:text-[hsl(var(--sidebar-fg))] hidden lg:block"
+        >
+          <ChevronLeft
+            size={16}
+            className={cn('transition-transform', !sidebarOpen && 'rotate-180')}
+          />
         </button>
       </div>
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto scrollbar-thin py-3 px-2 space-y-0.5">
         {visibleNav.map(({ href, label, icon: Icon }) => (
-          <NavLink key={href} to={href}
-            className={({ isActive }) => cn('nav-item', isActive && 'active')}>
+          <NavLink
+            key={href}
+            to={href}
+            className={({ isActive }) => cn('nav-item', isActive && 'active')}
+          >
             <Icon size={18} className="flex-shrink-0" />
             {sidebarOpen && <span>{label}</span>}
           </NavLink>
@@ -436,20 +510,25 @@ export function Sidebar() {
       <div className="border-t border-[hsl(var(--sidebar-border))] p-3">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
-            <span className="text-primary text-xs font-bold uppercase">
-              {user?.username?.[0]}
-            </span>
+            <span className="text-primary text-xs font-bold uppercase">{user?.username?.[0]}</span>
           </div>
           {sidebarOpen && (
             <div className="flex-1 overflow-hidden">
-              <p className="text-xs font-semibold text-[hsl(var(--sidebar-fg))] truncate">{user?.username}</p>
+              <p className="text-xs font-semibold text-[hsl(var(--sidebar-fg))] truncate">
+                {user?.username}
+              </p>
               <p className="text-2xs text-[hsl(var(--sidebar-fg)/0.5)] capitalize">{user?.role}</p>
             </div>
           )}
-          <button onClick={() => { logout(); navigate('/login') }}
-                  className="p-1.5 rounded hover:bg-[hsl(var(--sidebar-item-hover))]
+          <button
+            onClick={() => {
+              logout()
+              navigate('/login')
+            }}
+            className="p-1.5 rounded hover:bg-[hsl(var(--sidebar-item-hover))]
                              text-[hsl(var(--sidebar-fg)/0.5)] hover:text-danger transition-colors"
-                  title="Sign out">
+            title="Sign out"
+          >
             <LogOut size={15} />
           </button>
         </div>
@@ -460,25 +539,29 @@ export function Sidebar() {
 ```
 
 ### `src/components/layout/TopBar.tsx`
+
 ```tsx
 import { Menu, Sun, Moon, Monitor, Bell } from 'lucide-react'
 import { useUi } from '@/stores/ui.store'
 import { useLocation } from 'react-router-dom'
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
 const pageTitles: Record<string, string> = {
-  '/dashboard':     'Dashboard',
-  '/sessions':      'Live Sessions',
-  '/branches':      'Branches',
-  '/tokens':        'Tokens',
-  '/reports':       'Reports',
-  '/plans':         'Billing Plans',
-  '/wireguard':     'WireGuard',
-  '/users':         'Users',
+  '/dashboard': 'Dashboard',
+  '/sessions': 'Live Sessions',
+  '/branches': 'Branches',
+  '/tokens': 'Tokens',
+  '/reports': 'Reports',
+  '/plans': 'Billing Plans',
+  '/wireguard': 'WireGuard',
+  '/users': 'Users',
   '/organizations': 'Organizations',
-  '/settings':      'Settings',
+  '/settings': 'Settings',
 }
 
 export function TopBar() {
@@ -487,10 +570,14 @@ export function TopBar() {
   const title = pageTitles[location.pathname] ?? 'NexRAD'
 
   return (
-    <header className="h-14 border-b border-border bg-card/80 backdrop-blur-sm
-                       flex items-center gap-3 px-4 flex-shrink-0 sticky top-0 z-10">
-      <button onClick={toggleSidebar}
-              className="p-2 rounded-lg hover:bg-muted transition-colors lg:hidden">
+    <header
+      className="h-14 border-b border-border bg-card/80 backdrop-blur-sm
+                       flex items-center gap-3 px-4 flex-shrink-0 sticky top-0 z-10"
+    >
+      <button
+        onClick={toggleSidebar}
+        className="p-2 rounded-lg hover:bg-muted transition-colors lg:hidden"
+      >
         <Menu size={18} />
       </button>
 
@@ -533,6 +620,7 @@ export function TopBar() {
 ## Task 2.5 — Placeholder Dashboard Page
 
 **File:** `packages/web/src/pages/Dashboard.tsx`
+
 ```tsx
 import { PageHeader } from '@/components/shared/PageHeader'
 import { StatCard } from '@/components/shared/StatCard'
@@ -543,14 +631,12 @@ export default function Dashboard() {
     <div className="space-y-6">
       <PageHeader title="Dashboard" subtitle="Live overview across all branches" />
       <div className="kpi-grid">
-        <StatCard label="Live Sessions"    value={0}   colour="green"  icon={Activity} sub="Right now" />
-        <StatCard label="Active Branches"  value={0}   colour="blue"   icon={Wifi}     sub="Online" />
-        <StatCard label="Tokens Used"      value={0}   colour="purple" icon={Ticket}   sub="This month" />
-        <StatCard label="Realized Revenue" value="$0"  colour="green"  icon={DollarSign} sub="USD" />
+        <StatCard label="Live Sessions" value={0} colour="green" icon={Activity} sub="Right now" />
+        <StatCard label="Active Branches" value={0} colour="blue" icon={Wifi} sub="Online" />
+        <StatCard label="Tokens Used" value={0} colour="purple" icon={Ticket} sub="This month" />
+        <StatCard label="Realized Revenue" value="$0" colour="green" icon={DollarSign} sub="USD" />
       </div>
-      <p className="text-sm text-muted-foreground">
-        Full dashboard implemented in Sprint 3.
-      </p>
+      <p className="text-sm text-muted-foreground">Full dashboard implemented in Sprint 3.</p>
     </div>
   )
 }

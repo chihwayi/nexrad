@@ -1,11 +1,15 @@
 # Sprint 1 — Auth & Multi-tenant Foundation
+
 **Duration:** 5 days | **Goal:** Login/logout working, JWT + refresh tokens, RBAC middleware enforced, multi-tenant org isolation in place.
+
+> **AI ASSISTANT:** Before implementing this sprint, read `docs/GROUND_TRUTH.md` for canonical component APIs, import paths, and store names. Sprint docs may conflict — GROUND_TRUTH.md wins.
 
 > Every subsequent sprint builds features on top of this auth layer. Get it right here.
 
 ---
 
 ## Prerequisites
+
 - Sprint 0 sign-off complete ✓
 - Docker dev stack running
 - Migrations 001 + 002 applied
@@ -61,16 +65,16 @@ export class AuthService {
     await query('UPDATE nx_users SET last_login = NOW() WHERE id = ?', [user.id])
 
     const authUser: AuthUser = {
-      id:       user.id,
-      orgId:    user.org_id,
+      id: user.id,
+      orgId: user.org_id,
       username: user.username,
-      email:    user.email,
-      role:     user.role,
+      email: user.email,
+      role: user.role,
       branchIp: user.branch_ip,
-      orgSlug:  org?.slug ?? null,
+      orgSlug: org?.slug ?? null,
     }
 
-    const accessToken  = this.signAccess(authUser)
+    const accessToken = this.signAccess(authUser)
     const refreshToken = await this.createRefresh(user.id)
 
     return { accessToken, refreshToken, user: authUser }
@@ -93,13 +97,13 @@ export class AuthService {
     if (!row.is_active) throw new Error('Account disabled')
 
     const authUser: AuthUser = {
-      id:       row.uid,
-      orgId:    row.org_id,
+      id: row.uid,
+      orgId: row.org_id,
       username: row.username,
-      email:    row.email,
-      role:     row.role,
+      email: row.email,
+      role: row.role,
       branchIp: row.branch_ip,
-      orgSlug:  null,
+      orgSlug: null,
     }
 
     return { accessToken: this.signAccess(authUser) }
@@ -112,8 +116,13 @@ export class AuthService {
 
   private signAccess(user: AuthUser): string {
     return jwt.sign(
-      { sub: user.id, username: user.username, role: user.role,
-        orgId: user.orgId, branchIp: user.branchIp },
+      {
+        sub: user.id,
+        username: user.username,
+        role: user.role,
+        orgId: user.orgId,
+        branchIp: user.branchIp,
+      },
       config.jwt.secret,
       { expiresIn: config.jwt.expiresIn as any }
     )
@@ -121,12 +130,13 @@ export class AuthService {
 
   private async createRefresh(userId: number): Promise<string> {
     const token = uuidv4()
-    const hash  = await this.hashToken(token)
-    const exp   = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-    await query(
-      'INSERT INTO nx_refresh_tokens (user_id, token_hash, expires_at) VALUES (?,?,?)',
-      [userId, hash, exp]
-    )
+    const hash = await this.hashToken(token)
+    const exp = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+    await query('INSERT INTO nx_refresh_tokens (user_id, token_hash, expires_at) VALUES (?,?,?)', [
+      userId,
+      hash,
+      exp,
+    ])
     return token
   }
 
@@ -242,7 +252,8 @@ export async function authRoutes(app: FastifyInstance) {
 
   app.post('/auth/refresh', async (req, reply) => {
     const { refreshToken } = req.body as any
-    if (!refreshToken) return reply.code(400).send({ success: false, error: 'refreshToken required' })
+    if (!refreshToken)
+      return reply.code(400).send({ success: false, error: 'refreshToken required' })
     try {
       const result = await authService.refresh(refreshToken)
       return reply.send({ success: true, data: result })
@@ -277,65 +288,79 @@ import { query, queryOne } from '../db/mysql.js'
 import bcrypt from 'bcryptjs'
 
 const createOrgSchema = z.object({
-  name:           z.string().min(2).max(100),
-  slug:           z.string().min(2).max(50).regex(/^[a-z0-9-]+$/),
-  commissionRate: z.number().min(0).max(1).default(0.10),
-  adminUsername:  z.string().min(3),
-  adminPassword:  z.string().min(8),
-  adminEmail:     z.string().email().optional(),
+  name: z.string().min(2).max(100),
+  slug: z
+    .string()
+    .min(2)
+    .max(50)
+    .regex(/^[a-z0-9-]+$/),
+  commissionRate: z.number().min(0).max(1).default(0.1),
+  adminUsername: z.string().min(3),
+  adminPassword: z.string().min(8),
+  adminEmail: z.string().email().optional(),
 })
 
 export async function organizationRoutes(app: FastifyInstance) {
   // List all orgs — superadmin only
-  app.get('/organizations', {
-    preHandler: [requireRole('superadmin')],
-  }, async (_req, reply) => {
-    const orgs = await query(`
+  app.get(
+    '/organizations',
+    {
+      preHandler: [requireRole('superadmin')],
+    },
+    async (_req, reply) => {
+      const orgs = await query(`
       SELECT o.*, COUNT(DISTINCT u.id) as user_count, COUNT(DISTINCT b.id) as branch_count
       FROM nx_organizations o
       LEFT JOIN nx_users u ON u.org_id = o.id
       LEFT JOIN nx_branches b ON b.org_id = o.id
       GROUP BY o.id ORDER BY o.name
     `)
-    return reply.send({ success: true, data: orgs })
-  })
+      return reply.send({ success: true, data: orgs })
+    }
+  )
 
   // Create org — superadmin only
-  app.post('/organizations', {
-    preHandler: [requireRole('superadmin')],
-  }, async (req, reply) => {
-    const body = createOrgSchema.safeParse(req.body)
-    if (!body.success) return reply.code(400).send({ success: false, error: body.error.message })
-    const { name, slug, commissionRate, adminUsername, adminPassword, adminEmail } = body.data
+  app.post(
+    '/organizations',
+    {
+      preHandler: [requireRole('superadmin')],
+    },
+    async (req, reply) => {
+      const body = createOrgSchema.safeParse(req.body)
+      if (!body.success) return reply.code(400).send({ success: false, error: body.error.message })
+      const { name, slug, commissionRate, adminUsername, adminPassword, adminEmail } = body.data
 
-    const exists = await queryOne('SELECT id FROM nx_organizations WHERE slug = ?', [slug])
-    if (exists) return reply.code(409).send({ success: false, error: 'Slug already taken' })
+      const exists = await queryOne('SELECT id FROM nx_organizations WHERE slug = ?', [slug])
+      if (exists) return reply.code(409).send({ success: false, error: 'Slug already taken' })
 
-    const [orgResult]: any = await query(
-      'INSERT INTO nx_organizations (name, slug, commission_rate) VALUES (?,?,?)',
-      [name, slug, commissionRate]
-    )
-    const orgId = orgResult.insertId
-    const hash  = await bcrypt.hash(adminPassword, 12)
+      const [orgResult]: any = await query(
+        'INSERT INTO nx_organizations (name, slug, commission_rate) VALUES (?,?,?)',
+        [name, slug, commissionRate]
+      )
+      const orgId = orgResult.insertId
+      const hash = await bcrypt.hash(adminPassword, 12)
 
-    await query(
-      `INSERT INTO nx_users (org_id, username, email, password, role)
+      await query(
+        `INSERT INTO nx_users (org_id, username, email, password, role)
        VALUES (?,?,?,?,'orgadmin')`,
-      [orgId, adminUsername, adminEmail ?? null, hash]
-    )
+        [orgId, adminUsername, adminEmail ?? null, hash]
+      )
 
-    return reply.code(201).send({ success: true, data: { orgId, slug } })
-  })
+      return reply.code(201).send({ success: true, data: { orgId, slug } })
+    }
+  )
 
   // Get own org — orgadmin+
-  app.get('/organizations/me', {
-    preHandler: [requireRole('orgadmin', 'branchmanager', 'operator', 'readonly')],
-  }, async (req, reply) => {
-    const org = await queryOne(
-      'SELECT * FROM nx_organizations WHERE id = ?', [req.user.orgId]
-    )
-    return reply.send({ success: true, data: org })
-  })
+  app.get(
+    '/organizations/me',
+    {
+      preHandler: [requireRole('orgadmin', 'branchmanager', 'operator', 'readonly')],
+    },
+    async (req, reply) => {
+      const org = await queryOne('SELECT * FROM nx_organizations WHERE id = ?', [req.user.orgId])
+      return reply.send({ success: true, data: org })
+    }
+  )
 }
 ```
 
@@ -347,11 +372,11 @@ Update `packages/api/src/app.ts` to import and register routes:
 
 ```typescript
 // Add after existing registrations:
-import { authRoutes }         from './routes/auth.js'
+import { authRoutes } from './routes/auth.js'
 import { organizationRoutes } from './routes/organizations.js'
 
 // Inside buildApp():
-await app.register(authRoutes,         { prefix: '/api' })
+await app.register(authRoutes, { prefix: '/api' })
 await app.register(organizationRoutes, { prefix: '/api' })
 ```
 
@@ -365,14 +390,14 @@ await app.register(organizationRoutes, { prefix: '/api' })
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { AuthUser } from '@nexrad/shared'
-import { api } from '../lib/api'
+import { api } from '@/lib/api'
 
 interface AuthState {
-  user:         AuthUser | null
-  accessToken:  string | null
+  user: AuthUser | null
+  accessToken: string | null
   refreshToken: string | null
-  isLoading:    boolean
-  login:  (username: string, password: string) => Promise<void>
+  isLoading: boolean
+  login: (username: string, password: string) => Promise<void>
   logout: () => Promise<void>
   refresh: () => Promise<void>
 }
@@ -380,10 +405,10 @@ interface AuthState {
 export const useAuth = create<AuthState>()(
   persist(
     (set, get) => ({
-      user:         null,
-      accessToken:  null,
+      user: null,
+      accessToken: null,
       refreshToken: null,
-      isLoading:    false,
+      isLoading: false,
 
       login: async (username, password) => {
         set({ isLoading: true })
@@ -407,7 +432,7 @@ export const useAuth = create<AuthState>()(
     }),
     {
       name: 'nexrad-auth',
-      partialise: (s) => ({ refreshToken: s.refreshToken, user: s.user }),
+      partialize: (s) => ({ refreshToken: s.refreshToken, user: s.user }),
     }
   )
 )
@@ -417,7 +442,7 @@ export const useAuth = create<AuthState>()(
 
 ```typescript
 import axios from 'axios'
-import { useAuth } from '../stores/auth.store'
+import { useAuth } from '@/stores/auth.store'
 
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL + '/api',
@@ -459,19 +484,24 @@ api.interceptors.response.use(
 ```tsx
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useAuth } from '../stores/auth.store'
+import { useAuth } from '@/stores/auth.store'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { InlineAlert } from '@/components/shared/AlertBanner'
 
 export default function Login() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [error, setError]       = useState('')
-  const [loading, setLoading]   = useState(false)
-  const { login }               = useAuth()
-  const navigate                = useNavigate()
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  const { login } = useAuth()
+  const navigate = useNavigate()
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setError(''); setLoading(true)
+    setError('')
+    setLoading(true)
     try {
       await login(username, password)
       navigate('/dashboard')
@@ -495,10 +525,11 @@ export default function Login() {
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="bg-card border border-border rounded-xl p-6 space-y-4 shadow-card">
-          {error && (
-            <div className="badge-error rounded-lg px-3 py-2 text-sm">{error}</div>
-          )}
+        <form
+          onSubmit={handleSubmit}
+          className="bg-card border border-border rounded-xl p-6 space-y-4 shadow-card"
+        >
+          {error && <div className="badge-error rounded-lg px-3 py-2 text-sm">{error}</div>}
           <div className="space-y-2">
             <label className="text-sm font-medium">Username</label>
             <input
@@ -568,11 +599,14 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route path="/" element={
-          <ProtectedRoute>
-            <AppShell />
-          </ProtectedRoute>
-        }>
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <AppShell />
+            </ProtectedRoute>
+          }
+        >
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
           {/* Additional routes added per sprint */}
@@ -597,8 +631,13 @@ import { buildApp } from '../app.js'
 describe('POST /api/auth/login', () => {
   let app: Awaited<ReturnType<typeof buildApp>>
 
-  beforeAll(async () => { app = await buildApp(); await app.ready() })
-  afterAll(async () => { await app.close() })
+  beforeAll(async () => {
+    app = await buildApp()
+    await app.ready()
+  })
+  afterAll(async () => {
+    await app.close()
+  })
 
   it('returns 401 for wrong credentials', async () => {
     const res = await app.inject({

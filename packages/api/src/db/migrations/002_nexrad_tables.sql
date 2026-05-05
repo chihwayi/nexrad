@@ -146,3 +146,11 @@ CREATE TABLE IF NOT EXISTS nx_api_keys (
   CONSTRAINT fk_apikey_org  FOREIGN KEY (org_id)     REFERENCES nx_organizations(id) ON DELETE CASCADE,
   CONSTRAINT fk_apikey_user FOREIGN KEY (created_by) REFERENCES nx_users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Password: 'admin123' (bcrypt, cost 12) — CHANGE IN PRODUCTION
+INSERT IGNORE INTO nx_users (id, org_id, username, email, password, role)
+VALUES (
+  1, NULL, 'superadmin', 'admin@nexrad.io',
+  '$2b$12$1Vgb8jO2O14Uowto2ooMzeTeNS6mSpAPnH4ehGusiel5T1TWcWZIS',
+  'superadmin'
+);

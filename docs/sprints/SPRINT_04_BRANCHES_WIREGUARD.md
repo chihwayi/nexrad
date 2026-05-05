@@ -1,44 +1,101 @@
 # Sprint 4 — Branches & WireGuard Management
-**Duration:** 4 days | **Goal:** Full branch CRUD, WireGuard peer config generation, QR code download, branch status monitoring, and the first truly Starlink-capable branch onboarding flow.
 
-> After this sprint: an admin can add a branch, download a WireGuard config or scan a QR code, and the branch is live within minutes — no static IP required.
+**Duration:** 4 days | **Goal:** Full branch CRUD, zero-touch RouterOS provisioning script generation, automatic WireGuard peer self-registration, and branch status monitoring.
+
+> **AI ASSISTANT:** Before implementing this sprint, read `docs/GROUND_TRUTH.md` for canonical component APIs, import paths, and store names. Sprint docs may conflict — GROUND_TRUTH.md wins.
+
+> **After this sprint:** An admin creates a branch in NexRAD, downloads a RouterOS `.rsc` script, the field deployer imports it to a MikroTik via WinBox drag-drop, the router self-configures and calls back to NexRAD with its WireGuard public key, the peer is added live — no SSH, no manual SQL, no key copy-pasting.
+
+---
+
+## Architecture Overview
+
+```
+NexRAD UI
+  → Create branch (allocate tunnel IP, generate RADIUS secret, generate reg token)
+  → Admin downloads RouterOS .rsc provisioning script
+
+Field deployer
+  → Factory reset MikroTik → WinBox → drag .rsc to Files → /import filename.rsc
+  → MikroTik self-configures: bridge, hotspot, WireGuard (generates its OWN keys), RADIUS
+  → Script calls back: POST /api/branches/register-peer { token, publicKey }
+
+NexRAD API (register-peer endpoint)
+  → Validates one-time token
+  → Runs: wg set wg0 peer <pubKey> allowed-ips <tunnelIp>/32 persistent-keepalive=25
+  → Appends [Peer] stanza to /etc/wireguard/wg0.conf
+  → Updates nx_branches.wg_pubkey, nulls reg_token
+
+WireGuard tunnel comes up → RADIUS auth works → branch is live
+```
+
+The MikroTik generates its own private key (never leaves the device). NexRAD only ever sees the public key.
 
 ---
 
 ## Prerequisites
+
 - Sprint 0–3 sign-off checklists all ✓
-- WireGuard installed on server (`wg` command available)
-- `wg genkey`, `wg pubkey`, `wg genpsk` commands available in API container
-- `qrcode` npm package installed (already in package.json from Sprint 0)
+- `wg` command available in the API container (`wireguard-tools` installed)
+- `WG_SERVER_ENDPOINT` env var set to the server's public IP (e.g. `173.212.195.88`)
+- `WG_SERVER_PUBLIC_KEY` env var set to the server's WireGuard public key (run `wg show wg0 public-key` on the server)
+- NexRAD API reachable from the public internet on `API_BASE_URL` (MikroTik calls back to this URL)
 
 ---
 
-## Task 4.1 — WireGuard Key Generation Service (API)
+## Task 4.0 — Config & DB Migration
+
+### Add to `packages/api/src/config.ts` — extend `wg` section:
+
+The existing `wg` block in config.ts (from Sprint 0) needs two new fields. Add them inside the `wg` object:
+
+```typescript
+wg: {
+  interface:       process.env.WG_INTERFACE        || 'wg0',
+  configPath:      process.env.WG_CONFIG_PATH      || '/etc/wireguard/wg0.conf',
+  serverIp:        process.env.WG_SERVER_IP        || '10.8.0.1',
+  subnet:          process.env.WG_SUBNET           || '10.8.0.0/24',
+  endpoint:        process.env.WG_SERVER_ENDPOINT  || '',
+  port:            Number(process.env.WG_PORT)     || 51820,
+  serverPublicKey: process.env.WG_SERVER_PUBLIC_KEY || '',  // ADD THIS
+},
+apiBaseUrl: process.env.API_BASE_URL || `http://${process.env.WG_SERVER_ENDPOINT || 'localhost'}`,  // ADD THIS (top-level)
+```
+
+### Add to `.env.example`:
+
+```
+WG_SERVER_PUBLIC_KEY=        # wg show wg0 public-key on the server
+API_BASE_URL=http://173.212.195.88  # NexRAD API base URL reachable from MikroTik
+```
+
+### Create `packages/api/src/db/migrations/004_branch_provisioning.sql`:
+
+```sql
+-- Add provisioning columns to nx_branches
+ALTER TABLE nx_branches
+  ADD COLUMN IF NOT EXISTS radius_secret VARCHAR(64) NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS reg_token     VARCHAR(64) NULL DEFAULT NULL;
+```
+
+### Run the migration:
+
+```bash
+mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" \
+  < packages/api/src/db/migrations/004_branch_provisioning.sql
+```
+
+---
+
+## Task 4.1 — WireGuard Service (API)
 
 ### `packages/api/src/modules/wireguard/wg.service.ts`
+
 ```typescript
 import { execSync } from 'child_process'
-import { pool } from '../../db/mysql.js'
-import { query, queryOne } from '../../db/mysql.js'
+import { appendFileSync } from 'fs'
+import { query } from '../../db/mysql.js'
 import { config } from '../../config.js'
-
-export interface WgPeerConfig {
-  privateKey: string
-  publicKey: string
-  presharedKey: string
-  allowedIp: string  // e.g. 10.8.0.5/32
-  serverPublicKey: string
-  serverEndpoint: string
-  serverPort: number
-  dns: string
-  keepalive: number
-}
-
-export interface WgServerStatus {
-  interface: string
-  peers: WgActivePeer[]
-  serverPublicKey: string
-}
 
 export interface WgActivePeer {
   publicKey: string
@@ -50,33 +107,18 @@ export interface WgActivePeer {
 }
 
 /**
- * Generates a new WireGuard keypair + preshared key for a branch peer.
- * Uses exec — only called server-side, input is not user-controlled.
- */
-export function generateWgKeypair(): { privateKey: string; publicKey: string; presharedKey: string } {
-  const privateKey = execSync('wg genkey').toString().trim()
-  const publicKey = execSync(`echo "${privateKey}" | wg pubkey`).toString().trim()
-  const presharedKey = execSync('wg genpsk').toString().trim()
-  return { privateKey, publicKey, presharedKey }
-}
-
-/**
  * Assign the next available tunnel IP in the WireGuard subnet.
  * Reserves 10.8.0.1 for server, starts allocating from 10.8.0.2.
  */
 export async function allocateTunnelIp(): Promise<string> {
-  const [subnetBase] = config.wg.subnet.split('/')  // '10.8.0.0'
+  const [subnetBase] = config.wg.subnet.split('/')
   const parts = subnetBase.split('.').map(Number)
 
   const existing = await query<{ tunnel_ip: string }>(
     'SELECT tunnel_ip FROM nx_branches WHERE tunnel_ip IS NOT NULL ORDER BY tunnel_ip'
   )
-  const usedLast = new Set(existing.map((r) => {
-    const last = r.tunnel_ip.split('.')[3]
-    return Number(last)
-  }))
+  const usedLast = new Set(existing.map((r) => Number(r.tunnel_ip.split('.')[3])))
 
-  // Start from .2 (.1 = server), find first unused
   for (let i = 2; i < 254; i++) {
     if (!usedLast.has(i)) {
       return `${parts[0]}.${parts[1]}.${parts[2]}.${i}`
@@ -86,33 +128,12 @@ export async function allocateTunnelIp(): Promise<string> {
 }
 
 /**
- * Build the client-side WireGuard config file content.
- * The server peer has NO Endpoint when using dynamic/Starlink IPs.
- * The client side MUST have the server endpoint so it can initiate the connection.
- */
-export function buildClientConfig(peer: WgPeerConfig): string {
-  return `[Interface]
-PrivateKey = ${peer.privateKey}
-Address = ${peer.allowedIp}
-DNS = ${peer.dns}
-
-[Peer]
-PublicKey = ${peer.serverPublicKey}
-PresharedKey = ${peer.presharedKey}
-AllowedIPs = ${config.wg.serverIp}/32
-Endpoint = ${peer.serverEndpoint}:${peer.serverPort}
-PersistentKeepalive = ${peer.keepalive}
-`
-}
-
-/**
- * Build the server-side peer stanza to append to wg0.conf.
- * NOTE: No Endpoint= here — Starlink/dynamic IP branches initiate the tunnel.
- * FreeRADIUS sees the stable tunnel IP (10.8.0.x) regardless of real IP.
+ * Build the [Peer] stanza to append to /etc/wireguard/wg0.conf on the server.
+ * No Endpoint= — MikroTik initiates the tunnel (supports Starlink/dynamic IP).
+ * No PresharedKey — matches deployment guide and keeps the provisioning script simple.
  */
 export function buildServerPeerStanza(opts: {
   publicKey: string
-  presharedKey: string
   tunnelIp: string
   branchName: string
 }): string {
@@ -120,36 +141,67 @@ export function buildServerPeerStanza(opts: {
 # Branch: ${opts.branchName}
 [Peer]
 PublicKey = ${opts.publicKey}
-PresharedKey = ${opts.presharedKey}
 AllowedIPs = ${opts.tunnelIp}/32
-# No Endpoint= — branch initiates connection (supports Starlink/dynamic IP)
 PersistentKeepalive = 25
 `
 }
 
 /**
- * Parse `wg show wg0 dump` output into structured peer data.
+ * Add a peer to the live WireGuard interface without restarting it.
+ * Also appends the stanza to wg0.conf so it survives a server reboot.
  */
-export function parseWgDump(dump: string): WgActivePeer[] {
-  const lines = dump.trim().split('\n').slice(1) // skip header line
-  return lines.map((line) => {
-    const [pubkey, preshared, endpoint, allowedIps, lastHandshake, rxBytes, txBytes] =
-      line.split('\t')
-    return {
-      publicKey: pubkey,
-      endpoint: endpoint === '(none)' ? null : endpoint,
-      lastHandshake:
-        lastHandshake === '0'
-          ? null
-          : new Date(Number(lastHandshake) * 1000).toISOString(),
-      rxBytes: Number(rxBytes ?? 0),
-      txBytes: Number(txBytes ?? 0),
-      allowedIps,
-    }
-  })
+export async function addWgPeer(opts: {
+  publicKey: string
+  tunnelIp: string
+  branchName: string
+}): Promise<void> {
+  // Add to live interface
+  execSync(
+    `wg set ${config.wg.interface} peer ${opts.publicKey} allowed-ips ${opts.tunnelIp}/32 persistent-keepalive 25`
+  )
+
+  // Persist to conf file
+  const stanza = buildServerPeerStanza(opts)
+  appendFileSync(config.wg.configPath, stanza, 'utf8')
 }
 
-export async function getWgStatus(): Promise<WgActivePeer[]> {
+/**
+ * Remove a peer from the live WireGuard interface.
+ * Does NOT edit wg0.conf — the stanza stays in conf but is harmless once the peer is gone.
+ * To clean the conf file, redeploy or edit manually.
+ */
+export function removeWgPeer(publicKey: string): void {
+  try {
+    execSync(`wg set ${config.wg.interface} peer ${publicKey} remove`)
+  } catch {
+    // peer may not exist in live interface — non-fatal
+  }
+}
+
+/**
+ * Parse `wg show <iface> dump` output into structured peer data.
+ */
+export function parseWgDump(dump: string): WgActivePeer[] {
+  const lines = dump.trim().split('\n').slice(1) // skip server's own line
+  return lines
+    .filter((l) => l.trim())
+    .map((line) => {
+      const [pubkey, , endpoint, allowedIps, lastHandshake, rxBytes, txBytes] = line.split('\t')
+      return {
+        publicKey: pubkey,
+        endpoint: endpoint === '(none)' ? null : endpoint,
+        lastHandshake:
+          !lastHandshake || lastHandshake === '0'
+            ? null
+            : new Date(Number(lastHandshake) * 1000).toISOString(),
+        rxBytes: Number(rxBytes ?? 0),
+        txBytes: Number(txBytes ?? 0),
+        allowedIps,
+      }
+    })
+}
+
+export function getWgStatus(): WgActivePeer[] {
   try {
     const dump = execSync(`wg show ${config.wg.interface} dump 2>/dev/null`).toString()
     return parseWgDump(dump)
@@ -158,33 +210,277 @@ export async function getWgStatus(): Promise<WgActivePeer[]> {
   }
 }
 
-export async function getServerPublicKey(): Promise<string> {
+export function getServerPublicKey(): string {
   try {
     return execSync(`wg show ${config.wg.interface} public-key 2>/dev/null`).toString().trim()
   } catch {
-    return config.wg.interface  // fallback — should not happen in prod
+    return config.wg.serverPublicKey
   }
+}
+
+/**
+ * Build a complete MikroTik RouterOS provisioning script (.rsc).
+ *
+ * The script is imported via WinBox (drag-drop to Files → /import filename.rsc).
+ * The MikroTik generates its own WireGuard keypair — the private key never leaves the device.
+ * At the end the script POSTs the public key back to NexRAD to complete peer registration.
+ *
+ * The script handles both PATH A (blank slate, e.g. after Netinstall) and
+ * PATH B (existing bridge, e.g. after /system reset-configuration skip-backup=yes).
+ */
+export function buildRouterOSScript(opts: {
+  branchShortname: string
+  branchName: string
+  tunnelIp: string // e.g. 10.8.0.2
+  radiusSecret: string
+  serverPublicKey: string
+  serverEndpoint: string // e.g. 173.212.195.88
+  serverPort: number // 51820
+  serverRadiusIp: string // e.g. 10.8.0.1
+  registrationToken: string
+  apiBaseUrl: string // e.g. http://173.212.195.88
+}): string {
+  const {
+    branchShortname,
+    branchName,
+    tunnelIp,
+    radiusSecret,
+    serverPublicKey,
+    serverEndpoint,
+    serverPort,
+    serverRadiusIp,
+    registrationToken,
+    apiBaseUrl,
+  } = opts
+
+  return `# =============================================================
+# NexRAD RouterOS Provisioning Script
+# Branch : ${branchName}
+# Tunnel : ${tunnelIp}
+# Generated by NexRAD — import via WinBox Files tab
+# =============================================================
+#
+# BEFORE IMPORTING:
+#   1. Plug Starlink into ether1
+#   2. Connect your laptop to ether2 (or any non-ether1 port)
+#   3. Factory reset if previously used:
+#      /system reset-configuration skip-backup=yes
+#      Wait 3 min, reconnect via WinBox Neighbors tab
+#   4. Drag this file to WinBox Files panel
+#   5. In terminal: /import ${branchShortname}-provision.rsc
+#
+# You will lose WinBox briefly when your port joins the hotspot bridge.
+# WinBox Neighbors tab will find the router again at 10.10.10.1.
+# =============================================================
+
+# 1 — Router Identity
+/system identity set name="${branchShortname}"
+
+# 2 — WiFi (2.4GHz, open network — captive portal controls access)
+/interface wireless set wlan1 \\
+  mode=ap-bridge \\
+  ssid="ZimSmartVillages" \\
+  band=2ghz-b/g/n \\
+  channel-width=20/40mhz-Ce \\
+  frequency=auto \\
+  country=zimbabwe \\
+  installation=indoor \\
+  disabled=no
+/interface wireless security-profiles set [ find default=yes ] mode=none authentication-types=""
+/interface wireless set wlan1 security-profile=default
+
+# 3 — Bridge, IP, DHCP
+#     Set up bridge-hotspot with DHCP BEFORE moving any ports.
+#     This ensures your laptop gets an IP on 10.10.10.x after the brief disconnect.
+/interface bridge add name=bridge-hotspot comment="Hotspot Network"
+/ip address add address=10.10.10.1/24 interface=bridge-hotspot comment="Hotspot Gateway"
+/ip pool add name=hotspot-pool ranges=10.10.10.10-10.10.10.254
+/ip dhcp-server network add \\
+  address=10.10.10.0/24 gateway=10.10.10.1 dns-server=1.1.1.1,8.8.8.8
+/ip dhcp-server add \\
+  name=hotspot-dhcp interface=bridge-hotspot address-pool=hotspot-pool \\
+  disabled=no lease-time=1h
+
+# Add wlan1 first (no disconnect)
+/interface bridge port add interface=wlan1 bridge=bridge-hotspot
+
+# Move ether2-5 from any existing bridge to bridge-hotspot
+# (Brief WinBox disconnect when your port moves — reconnect via Neighbors tab)
+:foreach i in={2;3;4;5} do={
+  :local ifname ("ether" . $i)
+  :do { /interface bridge port remove [find interface=$ifname] } on-error={}
+  :do { /interface bridge port add interface=$ifname bridge=bridge-hotspot } on-error={}
+}
+
+# Remove old bridges and stale config (errors are safe to ignore)
+:do { /interface bridge remove [find name!=bridge-hotspot] } on-error={}
+:do { /ip address remove [find interface=bridge] } on-error={}
+:do { /ip address remove [find interface=bridge1] } on-error={}
+:do { /ip address remove [find invalid] } on-error={}
+:do { /ip dhcp-server remove [find interface!=bridge-hotspot] } on-error={}
+:do { /ip dhcp-client remove [find interface=bridge] } on-error={}
+:do { /ip dhcp-client remove [find interface=bridge1] } on-error={}
+
+# 4 — Internet via Starlink on ether1
+:if ([:len [/ip dhcp-client find interface=ether1]] = 0) do={
+  /ip dhcp-client add interface=ether1 disabled=no \\
+    use-peer-dns=yes use-peer-ntp=yes add-default-route=yes comment="Starlink WAN"
+}
+
+# 5 — Firewall & NAT
+#     IMPORTANT: rules are order-sensitive. Drop rules MUST come last.
+/ip firewall filter remove [find]
+/ip firewall nat remove [find]
+/ip firewall mangle remove [find]
+
+/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade \\
+  comment="Masquerade to WAN"
+/ip firewall filter add chain=input connection-state=established,related action=accept \\
+  comment="Allow established input"
+/ip firewall filter add chain=input protocol=icmp action=accept \\
+  comment="Allow ICMP"
+/ip firewall filter add chain=input in-interface=bridge-hotspot action=accept \\
+  comment="Allow from LAN"
+/ip firewall filter add chain=forward connection-state=established,related \\
+  action=fasttrack-connection comment="FastTrack for speed"
+/ip firewall filter add chain=forward connection-state=established,related action=accept \\
+  comment="Allow established forward"
+/ip firewall filter add chain=forward in-interface=bridge-hotspot out-interface=ether1 \\
+  action=accept comment="Hotspot to Internet"
+/ip firewall filter add chain=forward connection-state=invalid action=drop \\
+  comment="Drop invalid"
+/ip firewall filter add chain=input action=drop \\
+  comment="Drop all other input"
+/ip firewall mangle add chain=forward protocol=tcp tcp-flags=syn \\
+  action=change-mss new-mss=1340 comment="Optimize VPN MTU"
+
+# 6 — Hotspot (Persistent Sessions)
+#     login-by MUST include cookie for persistent sessions.
+#     html-directory="" uses RouterOS built-in pages (avoids 404 on clean installs).
+/ip hotspot profile add \\
+  name=custom-hotspot \\
+  login-by=http-pap,cookie \\
+  use-radius=yes \\
+  radius-accounting=yes \\
+  radius-interim-update=5m \\
+  html-directory="" \\
+  http-proxy=0.0.0.0:0
+/ip hotspot user profile add \\
+  name=default-hotspot \\
+  shared-users=unlimited \\
+  rate-limit="" \\
+  keepalive-timeout=none \\
+  idle-timeout=none \\
+  session-timeout=0 \\
+  transparent-proxy=no \\
+  add-mac-cookie=yes
+/ip hotspot add \\
+  name=hotspot1 \\
+  interface=bridge-hotspot \\
+  address-pool=hotspot-pool \\
+  profile=custom-hotspot \\
+  addresses-per-mac=2 \\
+  keepalive-timeout=none \\
+  idle-timeout=none
+/ip hotspot enable hotspot1
+
+# 7 — WireGuard VPN
+#     RouterOS generates its own keypair here — private key never leaves this device.
+/interface wireguard add name=wg-radius listen-port=51821 mtu=1380
+/ip address add address=${tunnelIp}/24 interface=wg-radius comment="WireGuard VPN"
+/interface wireguard peers add \\
+  interface=wg-radius \\
+  comment="RADIUS Server" \\
+  public-key="${serverPublicKey}" \\
+  endpoint-address=${serverEndpoint} \\
+  endpoint-port=${serverPort} \\
+  allowed-address=${serverRadiusIp}/32 \\
+  persistent-keepalive=25s
+
+# 8 — RADIUS (authenticates over WireGuard tunnel)
+/radius add \\
+  address=${serverRadiusIp} \\
+  secret=${radiusSecret} \\
+  service=hotspot,login \\
+  timeout=3s \\
+  comment="RADIUS via WireGuard"
+
+# 9 — Clock & NTP
+/system clock set time-zone-name=Africa/Harare
+/system ntp client set enabled=yes servers=pool.ntp.org
+
+# 10 — Security hardening
+#      WinBox is left unrestricted (0.0.0.0/0) because the firewall drop rule
+#      already blocks it from the internet. Restricting by IP breaks Neighbors tab.
+/ip service set telnet disabled=yes
+/ip service set ftp disabled=yes
+/ip service set www address=10.10.10.0/24,10.8.0.0/24
+/ip service set ssh address=10.10.10.0/24,10.8.0.0/24
+/ip service set winbox address=0.0.0.0/0
+/ip service set api disabled=yes
+/ip service set api-ssl disabled=yes
+/ip neighbor discovery-settings set discover-interface-list=none
+/tool mac-server set allowed-interface-list=none
+/tool mac-server mac-winbox set allowed-interface-list=none
+/interface list add name=LAN-only comment="Local management only"
+/interface list member add interface=bridge-hotspot list=LAN-only
+/tool mac-server set allowed-interface-list=LAN-only
+/tool mac-server mac-winbox set allowed-interface-list=LAN-only
+
+# 11 — Self-register WireGuard public key with NexRAD
+#      This call activates the WireGuard peer on the server automatically.
+#      On error: the public key is printed — give it to the NexRAD admin manually.
+:delay 5s
+:local wgPubKey [/interface wireguard get wg-radius public-key]
+:local regBody ("{\"token\":\"${registrationToken}\",\"publicKey\":\"" . $wgPubKey . "\"}")
+:put ""
+:put ">>> Registering WireGuard peer with NexRAD..."
+:do {
+  /tool fetch \\
+    url="${apiBaseUrl}/api/branches/register-peer" \\
+    http-method=post \\
+    http-header-field="Content-Type: application/json" \\
+    http-data=$regBody \\
+    output=user \\
+    duration=15s
+  :put ">>> Peer registered. WireGuard tunnel activating."
+} on-error={
+  :put ">>> Auto-registration failed (check internet on ether1)."
+  :put ">>> Give this public key to your NexRAD admin to activate manually:"
+  :put $wgPubKey
+  :put ">>> Manual activation: NexRAD → Branches → Activate → paste key above"
+}
+
+# 12 — Clear stale connections and save backup
+/ip firewall connection remove [find]
+/system backup save name=${branchShortname}-initial
+
+:put ""
+:put "=== NexRAD provisioning complete for ${branchName} ==="
+:put "WiFi: ZimSmartVillages is broadcasting"
+:put "VPN : tunnel to ${serverEndpoint} activating (allow 30s)"
+:put "Test: connect phone to ZimSmartVillages, open http://google.com"
+`
 }
 ```
 
 ---
 
-## Task 4.2 — Branch CRUD Service (API)
+## Task 4.2 — Branch Service (API)
 
 ### `packages/api/src/modules/branches/branch.service.ts`
+
 ```typescript
+import { randomBytes } from 'crypto'
 import { query, queryOne } from '../../db/mysql.js'
 import {
-  generateWgKeypair,
   allocateTunnelIp,
-  buildClientConfig,
-  buildServerPeerStanza,
+  buildRouterOSScript,
+  addWgPeer,
+  removeWgPeer,
   getServerPublicKey,
-  getWgStatus,
 } from '../wireguard/wg.service.js'
 import { config } from '../../config.js'
-import { execSync } from 'child_process'
-import { writeFileSync, appendFileSync } from 'fs'
 
 export interface Branch {
   id: number
@@ -194,13 +490,13 @@ export interface Branch {
   name: string
   location: string | null
   wgPubkey: string | null
-  wgEndpoint: string | null
   tunnelIp: string | null
+  radiusSecret: string
   isActive: boolean
   createdAt: string
   updatedAt: string
-  // Derived at runtime
-  status?: 'online' | 'recent' | 'inactive'
+  // Derived at runtime from wg show
+  status?: 'online' | 'recent' | 'inactive' | 'pending'
   activeSessions?: number
 }
 
@@ -209,109 +505,180 @@ export interface CreateBranchInput {
   name: string
   shortname: string
   location?: string
-  enableWireguard?: boolean
+}
+
+function generateRadiusSecret(): string {
+  // 20 random hex chars — strong enough, short enough to fit in RouterOS terminal
+  return randomBytes(10).toString('hex')
+}
+
+function generateRegToken(): string {
+  return randomBytes(32).toString('hex')
 }
 
 export async function listBranches(orgId: number): Promise<Branch[]> {
-  return query<Branch>(`
+  return query<Branch>(
+    `
     SELECT id, org_id AS orgId, nas_ip AS nasIp, shortname, name, location,
-           wg_pubkey AS wgPubkey, wg_endpoint AS wgEndpoint, tunnel_ip AS tunnelIp,
+           wg_pubkey AS wgPubkey, tunnel_ip AS tunnelIp,
+           radius_secret AS radiusSecret,
            is_active AS isActive, created_at AS createdAt, updated_at AS updatedAt
     FROM nx_branches
     WHERE org_id = ?
     ORDER BY name
-  `, [orgId])
+  `,
+    [orgId]
+  )
 }
 
 export async function getBranch(orgId: number, id: number): Promise<Branch | null> {
-  return queryOne<Branch>(`
+  return queryOne<Branch>(
+    `
     SELECT id, org_id AS orgId, nas_ip AS nasIp, shortname, name, location,
-           wg_pubkey AS wgPubkey, wg_endpoint AS wgEndpoint, tunnel_ip AS tunnelIp,
+           wg_pubkey AS wgPubkey, tunnel_ip AS tunnelIp,
+           radius_secret AS radiusSecret,
            is_active AS isActive, created_at AS createdAt, updated_at AS updatedAt
     FROM nx_branches
     WHERE id = ? AND org_id = ?
-  `, [id, orgId])
+  `,
+    [id, orgId]
+  )
 }
 
 /**
- * Create a branch. If enableWireguard=true:
- * 1. Generate keypair
- * 2. Allocate tunnel IP
- * 3. Append peer stanza to wg0.conf
- * 4. Apply with `wg addpeer` (no restart needed)
- * 5. Store keys in DB
- * Returns the client WireGuard config string.
+ * Create a branch:
+ * 1. Allocate a tunnel IP from 10.8.0.2 upward
+ * 2. Generate a unique RADIUS secret and a one-time registration token
+ * 3. Insert into nx_branches (wg_pubkey stays NULL until MikroTik self-registers)
+ * 4. Insert into FreeRADIUS nas table with the real secret
+ * Returns the branch record. The RouterOS script is built on demand via getProvisionScript().
  */
-export async function createBranch(
-  input: CreateBranchInput,
-  createdBy: number
-): Promise<{ branch: Branch; wgClientConfig?: string; wgPrivateKey?: string }> {
-  let tunnelIp: string | null = null
-  let wgPubkey: string | null = null
-  let wgClientConfig: string | undefined
-  let wgPrivateKey: string | undefined
-  let presharedKey: string | null = null
+export async function createBranch(input: CreateBranchInput): Promise<Branch> {
+  const tunnelIp = await allocateTunnelIp()
+  const radiusSecret = generateRadiusSecret()
+  const regToken = generateRegToken()
+  const nasIp = tunnelIp
 
-  if (input.enableWireguard) {
-    const keys = generateWgKeypair()
-    tunnelIp = await allocateTunnelIp()
-    wgPubkey = keys.publicKey
-    wgPrivateKey = keys.privateKey
-    presharedKey = keys.presharedKey
-
-    const serverPublicKey = await getServerPublicKey()
-
-    // Append to wg0.conf
-    const stanza = buildServerPeerStanza({
-      publicKey: keys.publicKey,
-      presharedKey: keys.presharedKey,
-      tunnelIp,
-      branchName: input.name,
-    })
-    appendFileSync(config.wg.configPath, stanza, 'utf8')
-
-    // Apply live without restart
-    try {
-      execSync(
-        `wg set ${config.wg.interface} peer ${keys.publicKey} preshared-key <(echo ${presharedKey}) allowed-ips ${tunnelIp}/32`,
-        { shell: '/bin/bash' }
-      )
-    } catch (e) {
-      console.warn('wg set failed (non-fatal, conf updated):', e)
-    }
-
-    wgClientConfig = buildClientConfig({
-      privateKey: keys.privateKey,
-      publicKey: keys.publicKey,
-      presharedKey: keys.presharedKey,
-      allowedIp: `${tunnelIp}/32`,
-      serverPublicKey,
-      serverEndpoint: config.wg.endpoint,
-      serverPort: config.wg.port,
-      dns: config.wg.serverIp,
-      keepalive: 25,
-    })
-  }
-
-  const nasIp = tunnelIp ?? '0.0.0.0'  // Placeholder if no WG
-
-  const [result] = await query<{ insertId: number }>(`
+  const [result] = await query<{ insertId: number }>(
+    `
     INSERT INTO nx_branches
-      (org_id, nas_ip, shortname, name, location, wg_pubkey, tunnel_ip, is_active)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-  `, [input.orgId, nasIp, input.shortname, input.name, input.location ?? null, wgPubkey, tunnelIp])
+      (org_id, nas_ip, shortname, name, location, tunnel_ip, radius_secret, reg_token, is_active)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+  `,
+    [
+      input.orgId,
+      nasIp,
+      input.shortname,
+      input.name,
+      input.location ?? null,
+      tunnelIp,
+      radiusSecret,
+      regToken,
+    ]
+  )
 
   const branchId = (result as any).insertId
 
-  // Also add to FreeRADIUS nas table so it can authenticate
-  await query(`
+  await query(
+    `
     INSERT IGNORE INTO nas (nasname, shortname, type, secret, description)
-    VALUES (?, ?, 'other', 'testing123', ?)
-  `, [nasIp, input.shortname, input.name])
+    VALUES (?, ?, 'other', ?, ?)
+  `,
+    [nasIp, input.shortname, radiusSecret, input.name]
+  )
 
-  const branch = await getBranch(input.orgId, branchId)
+  return (await getBranch(input.orgId, branchId))!
+}
 
-  return { branch: branch!, wgClientConfig, wgPrivateKey }
+/**
+ * Build and return the RouterOS .rsc provisioning script for a branch.
+ * Called by the download endpoint. Safe to call multiple times.
+ */
+export async function getProvisionScript(branch: Branch): Promise<string> {
+  if (!config.wg.endpoint) {
+    throw new Error('WG_SERVER_ENDPOINT not configured — cannot generate provisioning script')
+  }
+  if (!config.wg.serverPublicKey) {
+    throw new Error('WG_SERVER_PUBLIC_KEY not configured — cannot generate provisioning script')
+  }
+
+  // Fetch the one-time reg token for this branch
+  const row = await queryOne<{ reg_token: string | null }>(
+    'SELECT reg_token FROM nx_branches WHERE id = ?',
+    [branch.id]
+  )
+
+  if (!row?.reg_token) {
+    throw new Error(
+      'Branch is already activated or reg token has been used. Delete and recreate the branch to reprovision.'
+    )
+  }
+
+  return buildRouterOSScript({
+    branchShortname: branch.shortname,
+    branchName: branch.name,
+    tunnelIp: branch.tunnelIp!,
+    radiusSecret: branch.radiusSecret,
+    serverPublicKey: config.wg.serverPublicKey || getServerPublicKey(),
+    serverEndpoint: config.wg.endpoint,
+    serverPort: config.wg.port,
+    serverRadiusIp: config.wg.serverIp,
+    registrationToken: row.reg_token,
+    apiBaseUrl: config.apiBaseUrl,
+  })
+}
+
+/**
+ * Called when the MikroTik POSTs its public key after running the provisioning script.
+ * Validates the one-time token, adds the WireGuard peer, updates the DB.
+ */
+export async function registerPeer(token: string, publicKey: string): Promise<Branch> {
+  const branch = await queryOne<Branch & { reg_token: string; id: number; org_id: number }>(
+    `SELECT id, org_id AS orgId, name, shortname, tunnel_ip AS tunnelIp,
+            wg_pubkey AS wgPubkey, radius_secret AS radiusSecret, reg_token
+     FROM nx_branches WHERE reg_token = ?`,
+    [token]
+  )
+
+  if (!branch)
+    throw Object.assign(new Error('Invalid or expired registration token'), { statusCode: 403 })
+  if (branch.wgPubkey)
+    throw Object.assign(new Error('Branch already registered'), { statusCode: 409 })
+
+  // Add the peer to the live WireGuard interface and conf file
+  await addWgPeer({
+    publicKey,
+    tunnelIp: branch.tunnelIp!,
+    branchName: branch.name,
+  })
+
+  // Persist public key and consume the token
+  await query('UPDATE nx_branches SET wg_pubkey = ?, reg_token = NULL WHERE id = ?', [
+    publicKey,
+    branch.id,
+  ])
+
+  return (await getBranch(branch.orgId, branch.id))!
+}
+
+/**
+ * Manual activation path — admin pastes the public key into the NexRAD UI.
+ * Used as a fallback when auto-registration (MikroTik HTTP callback) fails.
+ */
+export async function activateBranch(orgId: number, id: number, wgPubkey: string): Promise<Branch> {
+  const branch = await getBranch(orgId, id)
+  if (!branch) throw Object.assign(new Error('Branch not found'), { statusCode: 404 })
+  if (branch.wgPubkey)
+    throw Object.assign(new Error('Branch already activated'), { statusCode: 409 })
+  if (!branch.tunnelIp) throw Object.assign(new Error('No tunnel IP assigned'), { statusCode: 400 })
+
+  await addWgPeer({ publicKey: wgPubkey, tunnelIp: branch.tunnelIp, branchName: branch.name })
+  await query(
+    'UPDATE nx_branches SET wg_pubkey = ?, reg_token = NULL WHERE id = ? AND org_id = ?',
+    [wgPubkey, id, orgId]
+  )
+
+  return (await getBranch(orgId, id))!
 }
 
 export async function updateBranch(
@@ -322,9 +689,18 @@ export async function updateBranch(
   const fields: string[] = []
   const values: unknown[] = []
 
-  if (updates.name !== undefined) { fields.push('name = ?'); values.push(updates.name) }
-  if (updates.location !== undefined) { fields.push('location = ?'); values.push(updates.location) }
-  if (updates.isActive !== undefined) { fields.push('is_active = ?'); values.push(updates.isActive ? 1 : 0) }
+  if (updates.name !== undefined) {
+    fields.push('name = ?')
+    values.push(updates.name)
+  }
+  if (updates.location !== undefined) {
+    fields.push('location = ?')
+    values.push(updates.location)
+  }
+  if (updates.isActive !== undefined) {
+    fields.push('is_active = ?')
+    values.push(updates.isActive ? 1 : 0)
+  }
 
   if (!fields.length) return getBranch(orgId, id)
 
@@ -337,14 +713,7 @@ export async function deleteBranch(orgId: number, id: number): Promise<void> {
   const branch = await getBranch(orgId, id)
   if (!branch) return
 
-  // Remove WireGuard peer if configured
-  if (branch.wgPubkey) {
-    try {
-      execSync(`wg set ${config.wg.interface} peer ${branch.wgPubkey} remove`)
-    } catch {
-      console.warn('Failed to remove wg peer (peer may not exist)')
-    }
-  }
+  if (branch.wgPubkey) removeWgPeer(branch.wgPubkey)
 
   await query('DELETE FROM nx_branches WHERE id = ? AND org_id = ?', [id, orgId])
   await query('DELETE FROM nas WHERE nasname = ?', [branch.nasIp])
@@ -356,27 +725,46 @@ export async function deleteBranch(orgId: number, id: number): Promise<void> {
 ## Task 4.3 — Branch Routes (API)
 
 ### `packages/api/src/modules/branches/branch.routes.ts`
+
 ```typescript
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { authenticate, requireRole } from '../auth/auth.middleware.js'
 import {
-  listBranches, getBranch, createBranch, updateBranch, deleteBranch
+  listBranches,
+  getBranch,
+  createBranch,
+  updateBranch,
+  deleteBranch,
+  getProvisionScript,
+  activateBranch,
+  registerPeer,
 } from './branch.service.js'
 import { getWgStatus } from '../wireguard/wg.service.js'
-import QRCode from 'qrcode'
 
 const CreateBranchSchema = z.object({
   name: z.string().min(2).max(100),
-  shortname: z.string().min(2).max(50).regex(/^[a-zA-Z0-9_-]+$/),
+  shortname: z
+    .string()
+    .min(2)
+    .max(50)
+    .regex(/^[a-zA-Z0-9_-]+$/),
   location: z.string().max(255).optional(),
-  enableWireguard: z.boolean().default(true),
 })
 
 const UpdateBranchSchema = z.object({
   name: z.string().min(2).max(100).optional(),
   location: z.string().max(255).optional(),
   isActive: z.boolean().optional(),
+})
+
+const ActivateSchema = z.object({
+  wgPubkey: z.string().min(40).max(50),
+})
+
+const RegisterPeerSchema = z.object({
+  token: z.string().length(64),
+  publicKey: z.string().min(40).max(50),
 })
 
 export async function branchRoutes(app: FastifyInstance) {
@@ -395,20 +783,13 @@ export async function branchRoutes(app: FastifyInstance) {
   })
 
   // Create branch (orgadmin+)
-  app.post(
-    '/branches',
-    { preHandler: requireRole('orgadmin') },
-    async (req, reply) => {
-      const body = CreateBranchSchema.parse(req.body)
-      const result = await createBranch(
-        { ...body, orgId: req.user!.orgId },
-        req.user!.id
-      )
-      return reply.status(201).send(result)
-    }
-  )
+  app.post('/branches', { preHandler: requireRole('orgadmin') }, async (req, reply) => {
+    const body = CreateBranchSchema.parse(req.body)
+    const branch = await createBranch({ ...body, orgId: req.user!.orgId })
+    return reply.status(201).send(branch)
+  })
 
-  // Update branch
+  // Update branch (orgadmin+)
   app.patch<{ Params: { id: string } }>(
     '/branches/:id',
     { preHandler: requireRole('orgadmin') },
@@ -420,7 +801,7 @@ export async function branchRoutes(app: FastifyInstance) {
     }
   )
 
-  // Delete branch
+  // Delete branch (orgadmin+)
   app.delete<{ Params: { id: string } }>(
     '/branches/:id',
     { preHandler: requireRole('orgadmin') },
@@ -430,58 +811,88 @@ export async function branchRoutes(app: FastifyInstance) {
     }
   )
 
-  // Download WireGuard config file
+  // Download RouterOS provisioning script (.rsc)
   app.get<{ Params: { id: string } }>(
-    '/branches/:id/wireguard/config',
+    '/branches/:id/provision/script',
     { preHandler: requireRole('orgadmin') },
     async (req, reply) => {
       const branch = await getBranch(req.user!.orgId, Number(req.params.id))
       if (!branch) return reply.status(404).send({ error: 'Branch not found' })
-      if (!branch.wgPubkey) return reply.status(400).send({ error: 'WireGuard not configured for this branch' })
 
-      // Config file is generated on demand from stored public key
-      // Private key is NOT stored (zero-knowledge) — returned once at creation
-      return reply.status(400).send({
-        error: 'Private key not stored. Download config at branch creation time.',
-        hint: 'Re-create the branch to get a new WireGuard config.',
-      })
+      let script: string
+      try {
+        script = await getProvisionScript(branch)
+      } catch (e: any) {
+        return reply.status(400).send({ error: e.message })
+      }
+
+      const filename = `${branch.shortname}-provision.rsc`
+      return reply
+        .header('Content-Type', 'text/plain; charset=utf-8')
+        .header('Content-Disposition', `attachment; filename="${filename}"`)
+        .send(script)
     }
   )
 
-  // Generate QR code for WireGuard config (returns base64 PNG)
+  // Manual activation fallback — admin pastes public key when auto-registration fails
   app.post<{ Params: { id: string } }>(
-    '/branches/:id/wireguard/qr',
+    '/branches/:id/activate',
     { preHandler: requireRole('orgadmin') },
     async (req, reply) => {
-      // QR generation requires the config string — passed in body after creation
-      const { configString } = req.body as { configString: string }
-      if (!configString) return reply.status(400).send({ error: 'configString required' })
-
-      const qr = await QRCode.toDataURL(configString, {
-        errorCorrectionLevel: 'M',
-        width: 400,
-      })
-      return { qrDataUrl: qr }
+      const { wgPubkey } = ActivateSchema.parse(req.body)
+      try {
+        const branch = await activateBranch(req.user!.orgId, Number(req.params.id), wgPubkey)
+        return branch
+      } catch (e: any) {
+        return reply.status(e.statusCode ?? 500).send({ error: e.message })
+      }
     }
   )
 
-  // WireGuard live peer status
-  app.get(
-    '/branches/wireguard/status',
-    { preHandler: requireRole('orgadmin') },
-    async () => {
-      const peers = await getWgStatus()
-      return { peers }
+  // Self-registration endpoint — called by MikroTik RouterOS script via /tool fetch.
+  // No authentication required (token IS the auth — it's a 256-bit random secret).
+  // Rate-limited to 10 req/min in production (add fastify-rate-limit if available).
+  app.post('/branches/register-peer', { config: { skipAuth: true } }, async (req, reply) => {
+    const { token, publicKey } = RegisterPeerSchema.parse(req.body)
+    try {
+      const branch = await registerPeer(token, publicKey)
+      return reply.status(200).send({ ok: true, branchName: branch.name })
+    } catch (e: any) {
+      return reply.status(e.statusCode ?? 500).send({ error: e.message })
     }
-  )
+  })
+
+  // WireGuard live peer status (superadmin/orgadmin)
+  app.get('/branches/wireguard/status', { preHandler: requireRole('orgadmin') }, async () => {
+    const peers = getWgStatus()
+    return { peers }
+  })
 }
 ```
 
+> **Note on `skipAuth`**: The `/branches/register-peer` route has `config: { skipAuth: true }`.
+> Ensure the `authenticate` hook in `auth.middleware.ts` checks `req.routeOptions?.config?.skipAuth`
+> and returns early when true, so unauthenticated MikroTik callbacks are accepted.
+
 ### Register in `packages/api/src/app.ts`:
+
 ```typescript
 import { branchRoutes } from './modules/branches/branch.routes.js'
-// inside buildApp:
+// inside buildApp, alongside other route registrations:
 await app.register(branchRoutes, { prefix: '/api' })
+```
+
+### Update `authenticate` hook in `packages/api/src/modules/auth/auth.middleware.ts`:
+
+Add this check at the top of the `authenticate` function body, before the JWT validation:
+
+```typescript
+export async function authenticate(req: FastifyRequest, reply: FastifyReply) {
+  // Allow routes that explicitly opt out (e.g. register-peer callback)
+  if ((req.routeOptions as any)?.config?.skipAuth) return
+
+  // ... existing JWT validation logic ...
+}
 ```
 
 ---
@@ -489,24 +900,39 @@ await app.register(branchRoutes, { prefix: '/api' })
 ## Task 4.4 — Frontend: Branches Page
 
 ### `packages/web/src/pages/Branches.tsx`
+
 ```tsx
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../lib/api'
-import { PageHeader } from '../components/PageHeader'
-import { DataTable } from '../components/DataTable'
-import { Button } from '../components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
-import { Input } from '../components/ui/input'
-import { Label } from '../components/ui/label'
-import { Switch } from '../components/ui/switch'
-import { Plus, Download, QrCode, Trash2, Wifi, WifiOff } from 'lucide-react'
+import { api } from '@/lib/api'
+import { toast } from '@/lib/toast'
+import { PageHeader } from '@/components/shared/PageHeader'
+import { DataTable } from '@/components/shared/DataTable'
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
+import {
+  Plus,
+  Download,
+  Key,
+  Copy,
+  Check,
+  Wifi,
+  WifiOff,
+  Clock,
+  Trash2,
+  ShieldAlert,
+} from 'lucide-react'
 import type { Branch } from '@nexrad/shared'
 
 export default function Branches() {
   const qc = useQueryClient()
   const [showAdd, setShowAdd] = useState(false)
-  const [wgResult, setWgResult] = useState<{ configString: string; branchName: string } | null>(null)
+  const [provision, setProvision] = useState<Branch | null>(null)
+  const [activating, setActivating] = useState<Branch | null>(null)
 
   const { data: branches = [], isLoading } = useQuery({
     queryKey: ['branches'],
@@ -517,34 +943,62 @@ export default function Branches() {
   const columns = [
     { key: 'name', header: 'Branch Name' },
     { key: 'shortname', header: 'Shortname' },
-    { key: 'nasIp', header: 'Tunnel IP / NAS IP' },
-    { key: 'location', header: 'Location', render: (v: string | null) => v ?? '—' },
+    {
+      key: 'tunnelIp',
+      header: 'Tunnel IP',
+      cell: (row: Branch) => <span className="font-mono text-sm">{row.tunnelIp ?? '—'}</span>,
+    },
+    {
+      key: 'location',
+      header: 'Location',
+      cell: (row: Branch) => row.location ?? <span className="text-muted-foreground">—</span>,
+    },
     {
       key: 'wgPubkey',
       header: 'WireGuard',
-      render: (v: string | null) =>
-        v ? (
+      cell: (row: Branch) => {
+        if (!row.wgPubkey) {
+          return (
+            <button
+              className="flex items-center gap-1 text-warning text-sm hover:underline"
+              onClick={() => setActivating(row)}
+            >
+              <ShieldAlert className="h-4 w-4" /> Pending activation
+            </button>
+          )
+        }
+        return (
           <span className="flex items-center gap-1 text-success text-sm">
-            <Wifi className="h-4 w-4" /> Configured
+            <Wifi className="h-4 w-4" />
+            <span className="font-mono text-xs">{row.wgPubkey.slice(0, 10)}…</span>
           </span>
-        ) : (
-          <span className="flex items-center gap-1 text-muted-foreground text-sm">
-            <WifiOff className="h-4 w-4" /> None
-          </span>
-        ),
+        )
+      },
     },
     {
       key: 'isActive',
       header: 'Status',
-      render: (v: boolean) =>
-        v ? <span className="badge-online">Active</span> : <span className="badge-offline">Inactive</span>,
+      cell: (row: Branch) =>
+        row.isActive ? (
+          <span className="badge-online">Active</span>
+        ) : (
+          <span className="badge-offline">Inactive</span>
+        ),
     },
     {
       key: 'id',
       header: '',
-      render: (_: number, row: Branch) => (
+      cell: (row: Branch) => (
         <div className="flex gap-2 justify-end">
-          <DeleteButton branch={row} onDeleted={() => qc.invalidateQueries({ queryKey: ['branches'] })} />
+          {!row.wgPubkey && (
+            <Button variant="outline" size="sm" onClick={() => setProvision(row)}>
+              <Download className="h-3.5 w-3.5 mr-1" /> Script
+            </Button>
+          )}
+          <DeleteButton
+            branch={row}
+            onDeleted={() => qc.invalidateQueries({ queryKey: ['branches'] })}
+          />
         </div>
       ),
     },
@@ -564,33 +1018,39 @@ export default function Branches() {
 
       <DataTable
         data={branches}
-        columns={columns as any}
-        keyField="id"
+        columns={columns}
+        rowKey={(row) => row.id}
         loading={isLoading}
-        emptyMessage="No branches yet. Add your first branch to get started."
+        emptyText="No branches yet. Add your first branch to get started."
       />
 
       <AddBranchDialog
         open={showAdd}
         onClose={() => setShowAdd(false)}
-        onCreated={(result) => {
+        onCreated={(branch) => {
           qc.invalidateQueries({ queryKey: ['branches'] })
           setShowAdd(false)
-          if (result.wgClientConfig) {
-            setWgResult({ configString: result.wgClientConfig, branchName: result.branch.name })
-          }
+          setProvision(branch)
         }}
       />
 
-      {wgResult && (
-        <WgConfigDialog
-          {...wgResult}
-          onClose={() => setWgResult(null)}
+      {provision && <ProvisionDialog branch={provision} onClose={() => setProvision(null)} />}
+
+      {activating && (
+        <ActivateDialog
+          branch={activating}
+          onActivated={() => {
+            qc.invalidateQueries({ queryKey: ['branches'] })
+            setActivating(null)
+          }}
+          onClose={() => setActivating(null)}
         />
       )}
     </div>
   )
 }
+
+// ── Add Branch Dialog ──────────────────────────────────────────────────────────
 
 function AddBranchDialog({
   open,
@@ -599,19 +1059,17 @@ function AddBranchDialog({
 }: {
   open: boolean
   onClose: () => void
-  onCreated: (result: any) => void
+  onCreated: (branch: Branch) => void
 }) {
-  const [form, setForm] = useState({
-    name: '',
-    shortname: '',
-    location: '',
-    enableWireguard: true,
-  })
+  const [form, setForm] = useState({ name: '', shortname: '', location: '' })
   const [error, setError] = useState<string | null>(null)
 
   const mutation = useMutation({
-    mutationFn: (data: typeof form) => api.post('/branches', data).then((r) => r.data),
-    onSuccess: (data) => onCreated(data),
+    mutationFn: (data: typeof form) => api.post<Branch>('/branches', data).then((r) => r.data),
+    onSuccess: (branch) => {
+      setForm({ name: '', shortname: '', location: '' })
+      onCreated(branch)
+    },
     onError: (e: any) => setError(e.response?.data?.message ?? 'Failed to create branch'),
   })
 
@@ -652,26 +1110,20 @@ function AddBranchDialog({
               onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))}
             />
           </div>
-          <div className="flex items-center justify-between py-2 border-t border-border">
-            <div>
-              <p className="font-medium text-sm">Enable WireGuard VPN</p>
-              <p className="text-xs text-muted-foreground">
-                Required for Starlink/dynamic IP branches
-              </p>
-            </div>
-            <Switch
-              checked={form.enableWireguard}
-              onCheckedChange={(v) => setForm((f) => ({ ...f, enableWireguard: v }))}
-            />
-          </div>
+          <p className="text-xs text-muted-foreground border-t border-border pt-3">
+            NexRAD will assign a tunnel IP and generate a RADIUS secret automatically. After
+            creation, download the RouterOS provisioning script.
+          </p>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={onClose}>Cancel</Button>
+            <Button variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
             <Button
               onClick={() => mutation.mutate(form)}
               disabled={mutation.isPending || !form.name || !form.shortname}
             >
-              {mutation.isPending ? 'Creating...' : 'Create Branch'}
+              {mutation.isPending ? 'Creating…' : 'Create Branch'}
             </Button>
           </div>
         </div>
@@ -680,59 +1132,109 @@ function AddBranchDialog({
   )
 }
 
-function WgConfigDialog({
-  configString,
-  branchName,
-  onClose,
-}: {
-  configString: string
-  branchName: string
-  onClose: () => void
-}) {
-  const [qrData, setQrData] = useState<string | null>(null)
+// ── Provision Dialog ───────────────────────────────────────────────────────────
 
-  const generateQr = async () => {
-    const res = await api.post('/branches/0/wireguard/qr', { configString })
-    setQrData(res.data.qrDataUrl)
+function ProvisionDialog({ branch, onClose }: { branch: Branch; onClose: () => void }) {
+  const [copied, setCopied] = useState(false)
+  const [showSecret, setShowSecret] = useState(false)
+
+  const downloadScript = async () => {
+    try {
+      const res = await api.get(`/branches/${branch.id}/provision/script`, {
+        responseType: 'blob',
+      })
+      const url = URL.createObjectURL(res.data)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${branch.shortname}-provision.rsc`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      toast.error('Failed to download script')
+    }
   }
 
-  const downloadConfig = () => {
-    const blob = new Blob([configString], { type: 'text/plain' })
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = `${branchName.replace(/\s+/g, '-').toLowerCase()}-wg0.conf`
-    a.click()
+  const copySecret = () => {
+    navigator.clipboard.writeText(branch.radiusSecret)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
   }
 
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>WireGuard Config — {branchName}</DialogTitle>
+          <DialogTitle>Provision — {branch.name}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
-          <div className="bg-muted rounded-lg p-3">
-            <pre className="text-xs font-mono whitespace-pre-wrap break-all">
-              {configString}
-            </pre>
-          </div>
-          <p className="text-sm text-warning font-medium">
-            Save this now — the private key will not be shown again.
-          </p>
-          <div className="flex gap-2">
-            <Button onClick={downloadConfig} className="flex-1">
-              <Download className="h-4 w-4 mr-2" /> Download .conf
-            </Button>
-            <Button variant="outline" onClick={generateQr} className="flex-1">
-              <QrCode className="h-4 w-4 mr-2" /> Show QR Code
-            </Button>
-          </div>
-          {qrData && (
-            <div className="flex flex-col items-center gap-2 pt-2 border-t border-border">
-              <p className="text-sm text-muted-foreground">Scan with the WireGuard mobile app</p>
-              <img src={qrData} alt="WireGuard QR Code" className="w-64 h-64 rounded-lg" />
+          {/* Assigned values */}
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className="kpi-card py-3">
+              <p className="text-xs text-muted-foreground">Tunnel IP</p>
+              <p className="font-mono font-semibold mt-1">{branch.tunnelIp}</p>
             </div>
-          )}
+            <div className="kpi-card py-3">
+              <p className="text-xs text-muted-foreground">RADIUS Secret</p>
+              <div className="flex items-center gap-2 mt-1">
+                <p className="font-mono font-semibold">
+                  {showSecret ? branch.radiusSecret : '••••••••••••'}
+                </p>
+                <button
+                  className="text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowSecret((v) => !v)}
+                >
+                  <Key className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  className="text-muted-foreground hover:text-foreground"
+                  onClick={copySecret}
+                >
+                  {copied ? (
+                    <Check className="h-3.5 w-3.5 text-success" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Instructions */}
+          <div className="bg-muted rounded-lg p-3 text-sm space-y-1.5">
+            <p className="font-semibold">Deployment steps:</p>
+            <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+              <li>Download the RouterOS script below</li>
+              <li>
+                Factory reset the MikroTik:
+                <br />
+                <code className="text-xs bg-background px-1 rounded">
+                  /system reset-configuration skip-backup=yes
+                </code>
+              </li>
+              <li>Reconnect via WinBox Neighbors tab</li>
+              <li>
+                Drag the <code className="text-xs bg-background px-1 rounded">.rsc</code> file into
+                WinBox Files panel
+              </li>
+              <li>
+                In terminal:{' '}
+                <code className="text-xs bg-background px-1 rounded">
+                  /import {branch.shortname}-provision.rsc
+                </code>
+              </li>
+              <li>Wait ~60s — the router self-registers and goes live</li>
+            </ol>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            The script self-registers the WireGuard key automatically. If the callback fails (e.g.
+            no internet on ether1 yet), use the "Activate manually" button on the Branches page and
+            paste the public key shown in the WinBox terminal.
+          </p>
+
+          <Button onClick={downloadScript} className="w-full">
+            <Download className="h-4 w-4 mr-2" /> Download RouterOS Script (.rsc)
+          </Button>
           <Button variant="outline" onClick={onClose} className="w-full">
             Done
           </Button>
@@ -742,77 +1244,156 @@ function WgConfigDialog({
   )
 }
 
+// ── Activate Dialog (manual fallback) ─────────────────────────────────────────
+
+function ActivateDialog({
+  branch,
+  onActivated,
+  onClose,
+}: {
+  branch: Branch
+  onActivated: () => void
+  onClose: () => void
+}) {
+  const [pubkey, setPubkey] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const mutation = useMutation({
+    mutationFn: () => api.post(`/branches/${branch.id}/activate`, { wgPubkey: pubkey.trim() }),
+    onSuccess: () => {
+      toast.success('Branch activated')
+      onActivated()
+    },
+    onError: (e: any) => setError(e.response?.data?.error ?? 'Activation failed'),
+  })
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Activate — {branch.name}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          <p className="text-sm text-muted-foreground">
+            Auto-registration failed. Run the provisioning script on the MikroTik and copy the
+            public key printed at the end of the terminal output.
+          </p>
+          <div>
+            <Label htmlFor="pubkey">WireGuard Public Key</Label>
+            <Input
+              id="pubkey"
+              placeholder="LKMStk1/IpcOy/codwE9dqkAaqzajock..."
+              value={pubkey}
+              onChange={(e) => setPubkey(e.target.value)}
+              className="font-mono text-sm"
+            />
+          </div>
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => mutation.mutate()}
+              disabled={mutation.isPending || pubkey.trim().length < 40}
+            >
+              {mutation.isPending ? 'Activating…' : 'Activate Branch'}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ── Delete Button ──────────────────────────────────────────────────────────────
+
 function DeleteButton({ branch, onDeleted }: { branch: Branch; onDeleted: () => void }) {
-  const [confirming, setConfirming] = useState(false)
+  const [open, setOpen] = useState(false)
 
   const mutation = useMutation({
     mutationFn: () => api.delete(`/branches/${branch.id}`),
-    onSuccess: onDeleted,
+    onSuccess: () => {
+      toast.success(`Branch "${branch.name}" deleted`)
+      onDeleted()
+    },
+    onError: () => toast.error('Failed to delete branch'),
   })
 
-  if (confirming) {
-    return (
-      <div className="flex gap-1">
-        <Button
-          variant="destructive"
-          size="sm"
-          onClick={() => mutation.mutate()}
-          disabled={mutation.isPending}
-        >
-          Confirm
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => setConfirming(false)}>
-          Cancel
-        </Button>
-      </div>
-    )
-  }
-
   return (
-    <Button variant="ghost" size="sm" onClick={() => setConfirming(true)}>
-      <Trash2 className="h-4 w-4 text-destructive" />
-    </Button>
+    <>
+      <Button variant="ghost" size="sm" onClick={() => setOpen(true)}>
+        <Trash2 className="h-4 w-4 text-destructive" />
+      </Button>
+      <ConfirmDialog
+        open={open}
+        title={`Delete "${branch.name}"?`}
+        description="This removes the WireGuard peer and RADIUS NAS entry. The router will stop authenticating users."
+        confirmLabel="Delete"
+        variant="destructive"
+        onConfirm={() => {
+          mutation.mutate()
+          setOpen(false)
+        }}
+        onCancel={() => setOpen(false)}
+      />
+    </>
   )
 }
 ```
 
 ---
 
-## Task 4.5 — Install React Query
+## Task 4.5 — React Query
 
-### Install in web package:
-```bash
-cd packages/web
-pnpm add @tanstack/react-query
-```
+> `@tanstack/react-query` is already installed from Sprint 0 setup. Only add `QueryClientProvider` if it is not already in `main.tsx` — do NOT remove the existing `BrowserRouter` or Sonner `Toaster`.
 
 ### `packages/web/src/lib/query.ts`
+
 ```typescript
 import { QueryClient } from '@tanstack/react-query'
 
 export const queryClient = new QueryClient({
   defaultOptions: {
-    queries: {
-      staleTime: 30_000,
-      retry: 1,
-    },
+    queries: { staleTime: 30_000, retry: 1 },
   },
 })
 ```
 
-### Update `packages/web/src/main.tsx`:
+### `packages/web/src/main.tsx` — ensure this structure (do not duplicate providers):
+
 ```tsx
 import React from 'react'
 import ReactDOM from 'react-dom/client'
+import { BrowserRouter } from 'react-router-dom'
 import { QueryClientProvider } from '@tanstack/react-query'
-import { queryClient } from './lib/query'
+import { Toaster } from 'sonner'
 import App from './App'
 import './index.css'
+import { queryClient } from './lib/query'
+import { useUi } from './stores/ui.store'
+
+function ThemedToaster() {
+  const { theme } = useUi()
+  return (
+    <Toaster
+      theme={theme === 'system' ? 'system' : theme}
+      richColors
+      position="top-right"
+      closeButton
+      toastOptions={{ duration: 4000 }}
+      expand={false}
+    />
+  )
+}
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <App />
+      <BrowserRouter>
+        <App />
+        <ThemedToaster />
+      </BrowserRouter>
     </QueryClientProvider>
   </React.StrictMode>
 )
@@ -820,37 +1401,31 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 
 ---
 
-## Task 4.6 — Sidebar Nav: Add Branches Link
+## Task 4.6 — Sidebar Nav & Route
 
-### Update `packages/web/src/components/Sidebar.tsx` — nav items array:
-```typescript
-const navItems = [
-  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['superadmin','orgadmin','branchmanager','operator','readonly'] },
-  { href: '/branches', label: 'Branches', icon: MapPin, roles: ['superadmin','orgadmin','branchmanager'] },
-  // Sprint 5+
-]
-```
+> Branches is already in the Sidebar nav items (added during Sprint 2 design system). Skip sidebar edits.
 
 ### Update `packages/web/src/App.tsx` — add route:
+
 ```tsx
 import Branches from './pages/Branches'
-// inside Routes:
-<Route path="/branches" element={<Branches />} />
+// inside <Routes>:
+;<Route path="/branches" element={<Branches />} />
 ```
-
-### Import `MapPin` from lucide-react in Sidebar.tsx.
 
 ---
 
 ## Task 4.7 — WireGuard Status Page
 
 ### `packages/web/src/pages/WireGuardStatus.tsx`
+
 ```tsx
 import { useQuery } from '@tanstack/react-query'
-import { api } from '../lib/api'
-import { PageHeader } from '../components/PageHeader'
-import { DataTable } from '../components/DataTable'
-import { formatBytes } from '../lib/utils'
+import { api } from '@/lib/api'
+import { PageHeader } from '@/components/shared/PageHeader'
+import { DataTable } from '@/components/shared/DataTable'
+import { formatBytes } from '@/lib/utils'
+import type { Branch } from '@nexrad/shared'
 
 interface WgPeer {
   publicKey: string
@@ -862,41 +1437,70 @@ interface WgPeer {
 }
 
 export default function WireGuardStatus() {
-  const { data, isLoading, refetch } = useQuery({
+  const { data: statusData, isLoading: statusLoading } = useQuery({
     queryKey: ['wg-status'],
     queryFn: () => api.get<{ peers: WgPeer[] }>('/branches/wireguard/status').then((r) => r.data),
     refetchInterval: 15_000,
   })
 
+  const { data: branches = [] } = useQuery({
+    queryKey: ['branches'],
+    queryFn: () => api.get<Branch[]>('/branches').then((r) => r.data),
+  })
+
+  // Build map: tunnelIp → branch name for display
+  const branchByTunnelIp = Object.fromEntries(
+    branches.map((b) => [b.tunnelIp?.replace('/32', '') ?? '', b.name])
+  )
+
+  const peers = statusData?.peers ?? []
+
   const columns = [
     {
       key: 'allowedIps',
-      header: 'Tunnel IP',
-      render: (v: string) => v.replace('/32', ''),
-    },
-    {
-      key: 'endpoint',
-      header: 'Real Endpoint',
-      render: (v: string | null) => v ?? <span className="text-muted-foreground">Not connected</span>,
+      header: 'Branch',
+      cell: (row: WgPeer) => {
+        const ip = row.allowedIps.replace('/32', '')
+        const name = branchByTunnelIp[ip]
+        return (
+          <div>
+            <p className="font-medium text-sm">{name ?? 'Unknown'}</p>
+            <p className="font-mono text-xs text-muted-foreground">{ip}</p>
+          </div>
+        )
+      },
     },
     {
       key: 'lastHandshake',
-      header: 'Last Handshake',
-      render: (v: string | null) => {
-        if (!v) return <span className="text-muted-foreground">Never</span>
-        const minutesAgo = (Date.now() - new Date(v).getTime()) / 60000
-        const label = minutesAgo < 2 ? 'Just now' : `${Math.round(minutesAgo)}m ago`
-        const cls = minutesAgo < 5 ? 'badge-online' : minutesAgo < 60 ? 'badge-warning' : 'badge-offline'
+      header: 'Status',
+      cell: (row: WgPeer) => {
+        if (!row.lastHandshake) return <span className="badge-offline">Never connected</span>
+        const minutesAgo = (Date.now() - new Date(row.lastHandshake).getTime()) / 60000
+        const label = minutesAgo < 2 ? 'Online now' : `${Math.round(minutesAgo)}m ago`
+        const cls =
+          minutesAgo < 5 ? 'badge-online' : minutesAgo < 60 ? 'badge-warning' : 'badge-offline'
         return <span className={cls}>{label}</span>
       },
     },
-    { key: 'rxBytes', header: 'Received', render: (v: number) => formatBytes(v) },
-    { key: 'txBytes', header: 'Sent', render: (v: number) => formatBytes(v) },
+    {
+      key: 'endpoint',
+      header: 'Real IP',
+      cell: (row: WgPeer) =>
+        row.endpoint ? (
+          <span className="font-mono text-xs">{row.endpoint}</span>
+        ) : (
+          <span className="text-muted-foreground text-sm">Not connected</span>
+        ),
+    },
+    { key: 'rxBytes', header: 'Received', cell: (row: WgPeer) => formatBytes(row.rxBytes) },
+    { key: 'txBytes', header: 'Sent', cell: (row: WgPeer) => formatBytes(row.txBytes) },
     {
       key: 'publicKey',
       header: 'Public Key',
-      render: (v: string) => (
-        <span className="font-mono text-xs">{v.slice(0, 12)}…</span>
+      cell: (row: WgPeer) => (
+        <span className="font-mono text-xs text-muted-foreground">
+          {row.publicKey.slice(0, 12)}…
+        </span>
       ),
     },
   ]
@@ -905,14 +1509,14 @@ export default function WireGuardStatus() {
     <div className="space-y-6">
       <PageHeader
         title="WireGuard Status"
-        subtitle="Live peer connection status — updates every 15s"
+        subtitle="Live peer connection status — refreshes every 15s"
       />
       <DataTable
-        data={data?.peers ?? []}
-        columns={columns as any}
-        keyField="publicKey"
-        loading={isLoading}
-        emptyMessage="No WireGuard peers connected. Is wg0 running?"
+        data={peers}
+        columns={columns}
+        rowKey={(row) => row.publicKey}
+        loading={statusLoading}
+        emptyText="No WireGuard peers. Is wg0 running on the server?"
       />
     </div>
   )
@@ -921,11 +1525,12 @@ export default function WireGuardStatus() {
 
 ---
 
-## Task 4.8 — Shared Branch Types Update
+## Task 4.8 — Shared Types
 
-### `packages/shared/src/types/branch.types.ts` — verify/update:
+### `packages/shared/src/types/branch.types.ts`
+
 ```typescript
-export type BranchStatus = 'online' | 'recent' | 'inactive'
+export type BranchStatus = 'online' | 'recent' | 'inactive' | 'pending'
 
 export interface Branch {
   id: number
@@ -934,9 +1539,9 @@ export interface Branch {
   shortname: string
   name: string
   location: string | null
-  wgPubkey: string | null
-  wgEndpoint: string | null
+  wgPubkey: string | null // null until MikroTik self-registers
   tunnelIp: string | null
+  radiusSecret: string // shown in the Provision dialog
   isActive: boolean
   createdAt: string
   updatedAt: string
@@ -944,23 +1549,10 @@ export interface Branch {
   activeSessions?: number
 }
 
-export interface WireGuardPeerConfig {
-  privateKey: string
-  publicKey: string
-  presharedKey: string
-  allowedIp: string
-  serverPublicKey: string
-  serverEndpoint: string
-  serverPort: number
-  dns: string
-  keepalive: number
-}
-
 export interface CreateBranchDto {
   name: string
   shortname: string
   location?: string
-  enableWireguard?: boolean
 }
 ```
 
@@ -969,6 +1561,7 @@ export interface CreateBranchDto {
 ## Task 4.9 — Integration Tests
 
 ### `packages/api/src/modules/branches/__tests__/branch.test.ts`
+
 ```typescript
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { buildApp } from '../../../app.js'
@@ -977,7 +1570,7 @@ import type { FastifyInstance } from 'fastify'
 describe('Branch endpoints', () => {
   let app: FastifyInstance
   let token: string
-  let createdBranchId: number
+  let branchId: number
 
   beforeAll(async () => {
     app = await buildApp()
@@ -991,10 +1584,10 @@ describe('Branch endpoints', () => {
   })
 
   afterAll(async () => {
-    if (createdBranchId) {
+    if (branchId) {
       await app.inject({
         method: 'DELETE',
-        url: `/api/branches/${createdBranchId}`,
+        url: `/api/branches/${branchId}`,
         headers: { authorization: `Bearer ${token}` },
       })
     }
@@ -1011,44 +1604,72 @@ describe('Branch endpoints', () => {
     expect(Array.isArray(res.json())).toBe(true)
   })
 
-  it('POST /api/branches creates branch without WireGuard', async () => {
+  it('POST /api/branches creates branch with tunnel IP and RADIUS secret', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/branches',
       headers: { authorization: `Bearer ${token}` },
-      body: {
-        name: 'Test Branch',
-        shortname: 'test-branch',
-        location: 'Test Location',
-        enableWireguard: false,
-      },
+      body: { name: 'Test Branch', shortname: 'test-branch', location: 'Test Location' },
     })
     expect(res.statusCode).toBe(201)
     const body = res.json()
-    expect(body.branch.name).toBe('Test Branch')
-    expect(body.wgClientConfig).toBeUndefined()
-    createdBranchId = body.branch.id
+    expect(body.name).toBe('Test Branch')
+    expect(body.tunnelIp).toMatch(/^10\.8\.0\.\d+$/)
+    expect(body.radiusSecret).toBeTruthy()
+    expect(body.radiusSecret.length).toBeGreaterThanOrEqual(20)
+    expect(body.wgPubkey).toBeNull() // null until MikroTik registers
+    branchId = body.id
   })
 
   it('GET /api/branches/:id returns the branch', async () => {
     const res = await app.inject({
       method: 'GET',
-      url: `/api/branches/${createdBranchId}`,
+      url: `/api/branches/${branchId}`,
       headers: { authorization: `Bearer ${token}` },
     })
     expect(res.statusCode).toBe(200)
     expect(res.json().name).toBe('Test Branch')
   })
 
-  it('PATCH /api/branches/:id updates branch', async () => {
+  it('PATCH /api/branches/:id updates location', async () => {
     const res = await app.inject({
       method: 'PATCH',
-      url: `/api/branches/${createdBranchId}`,
+      url: `/api/branches/${branchId}`,
       headers: { authorization: `Bearer ${token}` },
       body: { location: 'Updated Location' },
     })
     expect(res.statusCode).toBe(200)
     expect(res.json().location).toBe('Updated Location')
+  })
+
+  it('GET /api/branches/:id/provision/script returns .rsc content when WG_SERVER_ENDPOINT is set', async () => {
+    // Only runs if env is configured — skip gracefully in CI without server creds
+    if (!process.env.WG_SERVER_ENDPOINT || !process.env.WG_SERVER_PUBLIC_KEY) {
+      console.log('Skipping provision/script test — WG env vars not set')
+      return
+    }
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/branches/${branchId}/provision/script`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['content-disposition']).toContain('.rsc')
+    expect(res.body).toContain('/interface wireguard add name=wg-radius')
+    expect(res.body).toContain('/radius add')
+    expect(res.body).toContain('register-peer')
+  })
+
+  it('POST /branches/register-peer rejects invalid token', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/branches/register-peer',
+      body: {
+        token: 'a'.repeat(64),
+        publicKey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+      },
+    })
+    expect(res.statusCode).toBe(403)
   })
 
   it('returns 401 without token', async () => {
@@ -1067,17 +1688,22 @@ Before marking Sprint 4 complete, every item must be ✓:
 - [ ] `pnpm typecheck` exits 0 in all packages
 - [ ] `pnpm lint` exits 0 in all packages
 - [ ] `pnpm test` passes (branch.test.ts all green)
-- [ ] `GET /api/branches` returns `[]` or populated array with a valid JWT
-- [ ] `POST /api/branches` (enableWireguard: false) creates a branch — returns 201 with branch object
-- [ ] `POST /api/branches` (enableWireguard: true) returns `wgClientConfig` string in response
-- [ ] Downloaded `.conf` file has correct `[Interface]` and `[Peer]` stanzas
-- [ ] QR code endpoint returns a valid base64 PNG data URL
-- [ ] Branches page renders in browser — table shows existing branches
-- [ ] "Add Branch" dialog opens, form validates (shortname rejects spaces)
-- [ ] After creating a branch with WireGuard: config dialog appears with download button
-- [ ] WireGuard Status page loads (empty if no peers, no errors)
-- [ ] Deleting a branch requires confirmation click (two-step UX)
+- [ ] Migration `004_branch_provisioning.sql` ran — `nx_branches` has `radius_secret` and `reg_token` columns
+- [ ] `GET /api/branches` returns array with valid JWT
+- [ ] `POST /api/branches` returns 201 with `tunnelIp`, `radiusSecret` set and `wgPubkey: null`
+- [ ] Two branches created have sequential tunnel IPs (e.g. `10.8.0.2`, `10.8.0.3`)
+- [ ] `GET /api/branches/:id/provision/script` returns a `.rsc` file download (requires `WG_SERVER_ENDPOINT` + `WG_SERVER_PUBLIC_KEY`)
+- [ ] Downloaded `.rsc` file contains: `/interface wireguard add name=wg-radius`, `/radius add`, `register-peer`, the branch's tunnel IP, and the RADIUS secret
+- [ ] `POST /api/branches/register-peer` with invalid token returns 403
+- [ ] Branches page renders — table shows branches with tunnel IPs
+- [ ] "Add Branch" dialog creates a branch and immediately opens the Provision dialog
+- [ ] Provision dialog shows tunnel IP, masked RADIUS secret with copy/reveal buttons, download button
+- [ ] Download button fetches and saves `.rsc` file to disk
+- [ ] "Pending activation" badge shows on unregistered branches; clicking opens Activate dialog
+- [ ] Activate dialog POSTs to `/activate` and updates the branch row on success
+- [ ] Deleting a branch shows ConfirmDialog, then removes the row
+- [ ] WireGuard Status page loads without errors
 - [ ] `pnpm build` succeeds
-- [ ] `pnpm docker:dev` still starts cleanly
+- [ ] `pnpm docker:dev` starts cleanly
 
 **CI must be green before Sprint 5 begins.**

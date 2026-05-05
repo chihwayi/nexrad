@@ -1,11 +1,15 @@
 # Sprint 3 — Live Dashboard & WebSocket Sessions
+
 **Duration:** 4 days | **Goal:** Real-time dashboard showing live sessions, KPI cards with live data, branch status cards, Socket.io WebSocket layer, Redis pub/sub pipeline.
+
+> **AI ASSISTANT:** Before implementing this sprint, read `docs/GROUND_TRUTH.md` for canonical component APIs, import paths, and store names. Sprint docs may conflict — GROUND_TRUTH.md wins.
 
 > After this sprint: any user who logs in sees a real-time dashboard. Numbers update without page refresh. Branch operators see only their branch.
 
 ---
 
 ## Prerequisites
+
 - Sprint 0, 1, 2 sign-off checklists all ✓
 - Docker stack running (`pnpm docker:dev`)
 - At least one branch record exists in `nx_branches` (can be seeded)
@@ -16,6 +20,7 @@
 ## Task 3.1 — Socket.io Server Setup
 
 ### `packages/api/src/ws/socket.ts`
+
 ```typescript
 import { Server as SocketServer } from 'socket.io'
 import type { Server as HttpServer } from 'http'
@@ -99,6 +104,7 @@ async function subscribeToRedisEvents() {
 ```
 
 ### Update `packages/api/src/server.ts`
+
 ```typescript
 import { buildApp } from './app.js'
 import { connectRedis } from './db/redis.js'
@@ -137,6 +143,7 @@ start()
 ## Task 3.2 — Stats Service (API Layer)
 
 ### `packages/api/src/modules/stats/stats.service.ts`
+
 ```typescript
 import { query, queryOne } from '../../db/mysql.js'
 
@@ -162,25 +169,32 @@ export interface BranchStats {
 }
 
 export async function getGlobalStats(orgId: number): Promise<GlobalStats> {
-  const [active] = await query<{ count: number }>(`
+  const [active] = await query<{ count: number }>(
+    `
     SELECT COUNT(*) AS count
     FROM radacct
     WHERE acctstoptime IS NULL
       AND nasipaddress IN (
         SELECT nas_ip FROM nx_branches WHERE org_id = ? AND is_active = 1
       )
-  `, [orgId])
+  `,
+    [orgId]
+  )
 
-  const [today] = await query<{ count: number; unique: number }>(`
+  const [today] = await query<{ count: number; unique: number }>(
+    `
     SELECT COUNT(*) AS count, COUNT(DISTINCT username) AS unique_count
     FROM radacct
     WHERE DATE(acctstarttime) = CURDATE()
       AND nasipaddress IN (
         SELECT nas_ip FROM nx_branches WHERE org_id = ? AND is_active = 1
       )
-  `, [orgId])
+  `,
+    [orgId]
+  )
 
-  const [revenue] = await query<{ total: number }>(`
+  const [revenue] = await query<{ total: number }>(
+    `
     SELECT COALESCE(SUM(bp.planCost), 0) AS total
     FROM userbillinfo ubi
     JOIN billing_plans bp ON bp.planName = ubi.planName
@@ -189,9 +203,12 @@ export async function getGlobalStats(orgId: number): Promise<GlobalStats> {
       AND ubi.creationby IN (
         SELECT shortname FROM nx_branches WHERE org_id = ?
       )
-  `, [orgId])
+  `,
+    [orgId]
+  )
 
-  const [tokens] = await query<{ total: number; used: number }>(`
+  const [tokens] = await query<{ total: number; used: number }>(
+    `
     SELECT
       COUNT(*) AS total,
       SUM(CASE WHEN EXISTS (
@@ -201,7 +218,9 @@ export async function getGlobalStats(orgId: number): Promise<GlobalStats> {
     WHERE ubi.creationby IN (
       SELECT shortname FROM nx_branches WHERE org_id = ?
     )
-  `, [orgId])
+  `,
+    [orgId]
+  )
 
   return {
     activeSessions: Number(active?.count ?? 0),
@@ -219,44 +238,57 @@ export async function getBranchStats(orgId: number): Promise<BranchStats[]> {
     nas_ip: string
     shortname: string
     name: string
-  }>(`
+  }>(
+    `
     SELECT nas_ip, shortname, name
     FROM nx_branches
     WHERE org_id = ? AND is_active = 1
     ORDER BY name
-  `, [orgId])
+  `,
+    [orgId]
+  )
 
   const results: BranchStats[] = []
 
   for (const branch of branches) {
-    const [active] = await query<{ count: number }>(`
+    const [active] = await query<{ count: number }>(
+      `
       SELECT COUNT(*) AS count FROM radacct
       WHERE acctstoptime IS NULL AND nasipaddress = ?
-    `, [branch.nas_ip])
+    `,
+      [branch.nas_ip]
+    )
 
-    const [today] = await query<{ count: number }>(`
+    const [today] = await query<{ count: number }>(
+      `
       SELECT COUNT(*) AS count FROM radacct
       WHERE DATE(acctstarttime) = CURDATE() AND nasipaddress = ?
-    `, [branch.nas_ip])
+    `,
+      [branch.nas_ip]
+    )
 
-    const [revenue] = await query<{ total: number }>(`
+    const [revenue] = await query<{ total: number }>(
+      `
       SELECT COALESCE(SUM(bp.planCost), 0) AS total
       FROM userbillinfo ubi
       JOIN billing_plans bp ON bp.planName = ubi.planName
       WHERE ubi.creationby = ?
         AND DATE(ubi.creationdate) = CURDATE()
         AND EXISTS (SELECT 1 FROM radacct ra WHERE ra.username = ubi.username)
-    `, [branch.shortname])
+    `,
+      [branch.shortname]
+    )
 
-    const [lastActivity] = await query<{ last_seen: string | null }>(`
+    const [lastActivity] = await query<{ last_seen: string | null }>(
+      `
       SELECT MAX(acctstarttime) AS last_seen FROM radacct
       WHERE nasipaddress = ?
-    `, [branch.nas_ip])
+    `,
+      [branch.nas_ip]
+    )
 
     const lastSeen = (lastActivity as any)?.last_seen ?? null
-    const minutesAgo = lastSeen
-      ? (Date.now() - new Date(lastSeen).getTime()) / 60000
-      : Infinity
+    const minutesAgo = lastSeen ? (Date.now() - new Date(lastSeen).getTime()) / 60000 : Infinity
 
     const status: BranchStats['status'] =
       minutesAgo < 5 ? 'online' : minutesAgo < 60 ? 'recent' : 'inactive'
@@ -286,7 +318,8 @@ export async function getLiveSessions(orgId: number, limit = 50) {
     acctinputoctets: number
     acctoutputoctets: number
     calledstationid: string
-  }>(`
+  }>(
+    `
     SELECT
       ra.username,
       ra.nasipaddress,
@@ -303,11 +336,14 @@ export async function getLiveSessions(orgId: number, limit = 50) {
       )
     ORDER BY ra.acctstarttime DESC
     LIMIT ?
-  `, [orgId, limit])
+  `,
+    [orgId, limit]
+  )
 }
 ```
 
 ### `packages/api/src/modules/stats/stats.routes.ts`
+
 ```typescript
 import type { FastifyInstance } from 'fastify'
 import { authenticate, requireRole } from '../auth/auth.middleware.js'
@@ -337,6 +373,7 @@ export async function statsRoutes(app: FastifyInstance) {
 ```
 
 ### Register in `packages/api/src/app.ts` — add to route registrations:
+
 ```typescript
 import { statsRoutes } from './modules/stats/stats.routes.js'
 // inside buildApp, after other route registrations:
@@ -348,6 +385,7 @@ await app.register(statsRoutes, { prefix: '/api' })
 ## Task 3.3 — Stats Polling Job (Redis pub/sub broadcaster)
 
 ### `packages/api/src/jobs/stats.job.ts`
+
 ```typescript
 import { redis } from '../db/redis.js'
 import { getGlobalStats, getBranchStats } from '../modules/stats/stats.service.js'
@@ -360,7 +398,9 @@ import { query } from '../db/mysql.js'
 export async function startStatsJob() {
   const broadcastStats = async () => {
     try {
-      const orgs = await query<{ id: number }>('SELECT id FROM nx_organizations WHERE is_active = 1')
+      const orgs = await query<{ id: number }>(
+        'SELECT id FROM nx_organizations WHERE is_active = 1'
+      )
 
       for (const org of orgs) {
         const [global, branches] = await Promise.all([
@@ -388,6 +428,7 @@ export async function startStatsJob() {
 ```
 
 ### Update `packages/api/src/server.ts` — add job start:
+
 ```typescript
 import { startStatsJob } from './jobs/stats.job.js'
 // After initSocket(httpServer):
@@ -399,16 +440,18 @@ await startStatsJob()
 ## Task 3.4 — Frontend: Socket.io Client Hook
 
 ### Install socket.io-client:
+
 ```bash
 cd packages/web
 pnpm add socket.io-client
 ```
 
 ### `packages/web/src/hooks/useSocket.ts`
+
 ```typescript
 import { useEffect, useRef } from 'react'
 import { io, Socket } from 'socket.io-client'
-import { useAuthStore } from '../stores/auth.store'
+import { useAuth } from '@/stores/auth.store'
 
 let socketInstance: Socket | null = null
 
@@ -423,7 +466,7 @@ export function getSocket(): Socket {
 }
 
 export function useSocket() {
-  const token = useAuthStore((s) => s.accessToken)
+  const token = useAuth((s) => s.accessToken)
   const socketRef = useRef<Socket | null>(null)
 
   useEffect(() => {
@@ -445,10 +488,11 @@ export function useSocket() {
 ```
 
 ### `packages/web/src/hooks/useLiveStats.ts`
+
 ```typescript
 import { useEffect, useState } from 'react'
 import { getSocket } from './useSocket'
-import { api } from '../lib/api'
+import { api } from '@/lib/api'
 import type { GlobalStats, BranchStats } from '@nexrad/shared'
 
 interface LiveStatsState {
@@ -468,18 +512,17 @@ export function useLiveStats() {
 
   // Initial HTTP fetch
   useEffect(() => {
-    Promise.all([
-      api.get<GlobalStats>('/stats/global'),
-      api.get<BranchStats[]>('/stats/branches'),
-    ]).then(([globalRes, branchRes]) => {
-      setState((s) => ({
-        ...s,
-        global: globalRes.data,
-        branches: branchRes.data,
-        loading: false,
-        lastUpdated: new Date().toISOString(),
-      }))
-    }).catch(() => setState((s) => ({ ...s, loading: false })))
+    Promise.all([api.get<GlobalStats>('/stats/global'), api.get<BranchStats[]>('/stats/branches')])
+      .then(([globalRes, branchRes]) => {
+        setState((s) => ({
+          ...s,
+          global: globalRes.data,
+          branches: branchRes.data,
+          loading: false,
+          lastUpdated: new Date().toISOString(),
+        }))
+      })
+      .catch(() => setState((s) => ({ ...s, loading: false })))
   }, [])
 
   // WebSocket real-time updates
@@ -487,7 +530,11 @@ export function useLiveStats() {
     const socket = getSocket()
     if (!socket) return
 
-    const handleUpdate = (data: { global: GlobalStats; branches: BranchStats[]; timestamp: string }) => {
+    const handleUpdate = (data: {
+      global: GlobalStats
+      branches: BranchStats[]
+      timestamp: string
+    }) => {
       setState({
         global: data.global,
         branches: data.branches,
@@ -509,10 +556,11 @@ export function useLiveStats() {
 ```
 
 ### `packages/web/src/hooks/useLiveSessions.ts`
+
 ```typescript
 import { useEffect, useState } from 'react'
 import { getSocket } from './useSocket'
-import { api } from '../lib/api'
+import { api } from '@/lib/api'
 
 export interface LiveSession {
   username: string
@@ -563,16 +611,15 @@ export function useLiveSessions() {
 ## Task 3.5 — Dashboard Page (Full Implementation)
 
 ### `packages/web/src/pages/Dashboard.tsx`
+
 ```tsx
-import { useLiveStats } from '../hooks/useLiveStats'
-import { useLiveSessions } from '../hooks/useLiveSessions'
-import { StatCard } from '../components/StatCard'
-import { PageHeader } from '../components/PageHeader'
-import { DataTable } from '../components/DataTable'
-import { formatCurrency, formatBytes, formatDuration } from '../lib/utils'
-import {
-  Users, Wifi, DollarSign, Ticket, TrendingUp, Activity,
-} from 'lucide-react'
+import { useLiveStats } from '@/hooks/useLiveStats'
+import { useLiveSessions } from '@/hooks/useLiveSessions'
+import { StatCard } from '@/components/shared/StatCard'
+import { PageHeader } from '@/components/shared/PageHeader'
+import { DataTable } from '@/components/shared/DataTable'
+import { formatCurrency, formatBytes, formatDuration } from '@/lib/utils'
+import { Users, Wifi, DollarSign, Ticket, TrendingUp, Activity } from 'lucide-react'
 
 export default function Dashboard() {
   const { global, branches, loading, lastUpdated } = useLiveStats()
@@ -583,31 +630,31 @@ export default function Dashboard() {
     {
       key: 'nasipaddress',
       header: 'Branch',
-      render: (v: string) => {
-        const branch = branches.find((b) => b.nasIp === v)
-        return branch?.name ?? v
+      cell: (row: LiveSession) => {
+        const branch = branches.find((b) => b.nasIp === row.nasipaddress)
+        return branch?.name ?? row.nasipaddress
       },
     },
     { key: 'framedipaddress', header: 'IP Address' },
     {
       key: 'acctstarttime',
       header: 'Connected',
-      render: (v: string) => new Date(v).toLocaleTimeString(),
+      cell: (row: LiveSession) => new Date(row.acctstarttime).toLocaleTimeString(),
     },
     {
       key: 'acctsessiontime',
       header: 'Duration',
-      render: (v: number) => formatDuration(v),
+      cell: (row: LiveSession) => formatDuration(row.acctsessiontime),
     },
     {
       key: 'acctinputoctets',
       header: 'Down',
-      render: (v: number) => formatBytes(v),
+      cell: (row: LiveSession) => formatBytes(row.acctinputoctets),
     },
     {
       key: 'acctoutputoctets',
       header: 'Up',
-      render: (v: number) => formatBytes(v),
+      cell: (row: LiveSession) => formatBytes(row.acctoutputoctets),
     },
   ]
 
@@ -616,9 +663,7 @@ export default function Dashboard() {
       <PageHeader
         title="Live Dashboard"
         subtitle={
-          lastUpdated
-            ? `Updated ${new Date(lastUpdated).toLocaleTimeString()}`
-            : 'Connecting...'
+          lastUpdated ? `Updated ${new Date(lastUpdated).toLocaleTimeString()}` : 'Connecting...'
         }
         actions={
           <span className="flex items-center gap-1.5 text-sm text-success">
@@ -631,45 +676,45 @@ export default function Dashboard() {
       {/* Global KPI Cards */}
       <div className="kpi-grid">
         <StatCard
-          title="Active Sessions"
+          label="Active Sessions"
           value={global?.activeSessions ?? 0}
-          icon={<Wifi className="h-5 w-5" />}
-          color="success"
+          icon={Wifi}
+          colour="green"
           loading={loading}
         />
         <StatCard
-          title="Sessions Today"
+          label="Sessions Today"
           value={global?.todaySessions ?? 0}
-          icon={<Activity className="h-5 w-5" />}
-          color="info"
+          icon={Activity}
+          colour="blue"
           loading={loading}
         />
         <StatCard
-          title="Revenue Today"
+          label="Revenue Today"
           value={formatCurrency(global?.realizedRevenueToday ?? 0)}
-          icon={<DollarSign className="h-5 w-5" />}
-          color="warning"
+          icon={DollarSign}
+          colour="amber"
           loading={loading}
         />
         <StatCard
-          title="Unique Users"
+          label="Unique Users"
           value={global?.uniqueUsersToday ?? 0}
-          icon={<Users className="h-5 w-5" />}
-          color="default"
+          icon={Users}
+          colour="default"
           loading={loading}
         />
         <StatCard
-          title="Tokens Used"
+          label="Tokens Used"
           value={global?.usedTokens ?? 0}
-          icon={<Ticket className="h-5 w-5" />}
-          color="default"
+          icon={Ticket}
+          colour="default"
           loading={loading}
         />
         <StatCard
-          title="Tokens Available"
+          label="Tokens Available"
           value={global?.unusedTokens ?? 0}
-          icon={<TrendingUp className="h-5 w-5" />}
-          color="default"
+          icon={TrendingUp}
+          colour="default"
           loading={loading}
         />
       </div>
@@ -704,9 +749,9 @@ export default function Dashboard() {
         <DataTable
           data={sessions}
           columns={sessionColumns}
-          keyField="username"
+          rowKey={(row) => row.username}
           loading={sessionsLoading}
-          emptyMessage="No active sessions right now."
+          emptyText="No active sessions right now."
         />
       </section>
     </div>
@@ -758,9 +803,7 @@ function BranchCard({ branch }: BranchCardProps) {
           <p className="text-xs text-muted-foreground">Today</p>
         </div>
         <div>
-          <p className="text-lg font-bold text-success">
-            {formatCurrency(branch.realizedRevenue)}
-          </p>
+          <p className="text-lg font-bold text-success">{formatCurrency(branch.realizedRevenue)}</p>
           <p className="text-xs text-muted-foreground">Revenue</p>
         </div>
       </div>
@@ -779,7 +822,9 @@ function BranchCard({ branch }: BranchCardProps) {
 ## Task 3.6 — Shared Types Update
 
 ### Add to `packages/shared/src/types/report.types.ts` (or create stats.types.ts):
+
 ### `packages/shared/src/types/stats.types.ts`
+
 ```typescript
 export interface GlobalStats {
   activeSessions: number
@@ -811,6 +856,7 @@ export interface WsStatsUpdate {
 ```
 
 ### Update `packages/shared/src/index.ts` — add export:
+
 ```typescript
 export * from './types/stats.types.js'
 ```
@@ -820,39 +866,90 @@ export * from './types/stats.types.js'
 ## Task 3.7 — Wire Dashboard into Router
 
 ### Update `packages/web/src/App.tsx`:
+
+> **IMPORTANT:** BrowserRouter is already in `main.tsx` — do NOT add it here. AppShell uses `<Outlet />` — do NOT pass children to it. Just add the Dashboard import and lazy-load it under the existing protected shell route.
+
 ```tsx
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { useAuthStore } from './stores/auth.store'
-import { AppShell } from './components/AppShell'
-import Login from './pages/Login'
-import Dashboard from './pages/Dashboard'
+// Add this import at the top of the existing App.tsx:
+const Dashboard = lazy(() => import('@/pages/Dashboard'))
+
+// Replace the existing /dashboard placeholder route with:
+<Route
+  path="/dashboard"
+  element={
+    <Suspense fallback={<Fallback />}>
+      <Dashboard />
+    </Suspense>
+  }
+/>
+```
+
+The full App.tsx after Sprint 3 should look like:
+
+```tsx
+import { lazy, Suspense } from 'react'
+import { Routes, Route, Navigate } from 'react-router-dom'
+import { useAuth } from '@/stores/auth.store'
+import AppShell from '@/components/layout/AppShell'
+import { ErrorBoundary } from '@/components/shared/ErrorBoundary'
+import { PageSkeleton } from '@/components/shared/PageSkeleton'
+
+const Login = lazy(() => import('@/pages/Login'))
+const Dashboard = lazy(() => import('@/pages/Dashboard'))
+
+function Fallback() {
+  return (
+    <div className="px-4 py-5 sm:px-6 sm:py-6">
+      <PageSkeleton />
+    </div>
+  )
+}
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const user = useAuthStore((s) => s.user)
-  return user ? <>{children}</> : <Navigate to="/login" replace />
+  const { user } = useAuth()
+  if (!user) return <Navigate to="/login" replace />
+  return <>{children}</>
 }
 
 export default function App() {
+  const { user } = useAuth()
+
   return (
-    <BrowserRouter>
+    <ErrorBoundary>
       <Routes>
-        <Route path="/login" element={<Login />} />
         <Route
-          path="/*"
+          path="/login"
           element={
-            <ProtectedRoute>
-              <AppShell>
-                <Routes>
-                  <Route path="/" element={<Dashboard />} />
-                  <Route path="/dashboard" element={<Dashboard />} />
-                  {/* Sprint 4+ routes go here */}
-                </Routes>
-              </AppShell>
-            </ProtectedRoute>
+            user ? (
+              <Navigate to="/dashboard" replace />
+            ) : (
+              <Suspense fallback={<div className="min-h-screen bg-background" />}>
+                <Login />
+              </Suspense>
+            )
           }
         />
+        <Route
+          element={
+            <ProtectedRoute>
+              <AppShell />
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<Navigate to="/dashboard" replace />} />
+          <Route
+            path="/dashboard"
+            element={
+              <Suspense fallback={<Fallback />}>
+                <Dashboard />
+              </Suspense>
+            }
+          />
+          {/* Sprint 4+ routes added below here */}
+        </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </BrowserRouter>
+    </ErrorBoundary>
   )
 }
 ```
@@ -862,6 +959,7 @@ export default function App() {
 ## Task 3.8 — Connect Socket on App Load
 
 ### Update `packages/web/src/App.tsx` — add socket init effect:
+
 ```tsx
 import { useEffect } from 'react'
 import { useSocket } from './hooks/useSocket'
@@ -877,24 +975,21 @@ function SocketManager() {
 // Add <SocketManager /> inside ProtectedRoute before AppShell content
 ```
 
-Full updated App.tsx:
+Add `SocketManager` to the existing `App.tsx` — update `ProtectedRoute` only:
+
 ```tsx
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { useEffect } from 'react'
-import { useAuthStore } from './stores/auth.store'
-import { AppShell } from './components/AppShell'
-import { useSocket } from './hooks/useSocket'
-import Login from './pages/Login'
-import Dashboard from './pages/Dashboard'
+import { useSocket } from '@/hooks/useSocket'
 
 function SocketManager() {
   useSocket()
   return null
 }
 
+// Update ProtectedRoute in existing App.tsx to include SocketManager:
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const user = useAuthStore((s) => s.user)
-  return user ? (
+  const { user } = useAuth()
+  if (!user) return <Navigate to="/login" replace />
+  return (
     <>
       <SocketManager />
       {children}
@@ -933,11 +1028,13 @@ export default function App() {
 ## Task 3.9 — Environment Variables
 
 ### Add to `packages/web/.env` (create from `.env.example`):
+
 ```
 VITE_API_URL=http://localhost:3000
 ```
 
 ### Add to `.env.example` at repo root:
+
 ```
 # Web
 VITE_API_URL=http://localhost:3000
@@ -948,6 +1045,7 @@ VITE_API_URL=http://localhost:3000
 ## Task 3.10 — Integration Test (API Stats Endpoints)
 
 ### `packages/api/src/modules/stats/__tests__/stats.test.ts`
+
 ```typescript
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { buildApp } from '../../../app.js'
@@ -1019,6 +1117,7 @@ describe('Stats endpoints', () => {
 ## Task 3.11 — Sidebar Nav Update (add Dashboard link if not present)
 
 ### Verify `packages/web/src/components/Sidebar.tsx` contains a Dashboard nav item:
+
 ```tsx
 // The nav items array should include:
 { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['superadmin','orgadmin','branchmanager','operator','readonly'] }

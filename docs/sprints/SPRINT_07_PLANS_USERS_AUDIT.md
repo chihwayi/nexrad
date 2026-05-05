@@ -1,11 +1,15 @@
 # Sprint 7 — Billing Plans, User Management & Audit Log
+
 **Duration:** 4 days | **Goal:** Full billing plan CRUD, user management (invite/deactivate/role assign), session kick, token expiry enforcement, and a searchable audit log.
+
+> **AI ASSISTANT:** Before implementing this sprint, read `docs/GROUND_TRUTH.md` for canonical component APIs, import paths, and store names. Sprint docs may conflict — GROUND_TRUTH.md wins.
 
 > After this sprint: admins can manage who accesses the system, configure pricing plans, force-disconnect misbehaving sessions, and view a full audit trail of every action.
 
 ---
 
 ## Prerequisites
+
 - Sprint 0–6 sign-off checklists all ✓
 - `nx_billing_plans`, `nx_users`, `nx_audit_log` tables exist (from Migration 002)
 
@@ -14,6 +18,7 @@
 ## Task 7.1 — Billing Plan Service (API)
 
 ### `packages/api/src/modules/plans/plan.service.ts`
+
 ```typescript
 import { query, queryOne } from '../../db/mysql.js'
 
@@ -43,7 +48,8 @@ export interface CreatePlanInput {
 }
 
 export async function listPlans(orgId: number, includeInactive = false): Promise<BillingPlan[]> {
-  return query<BillingPlan>(`
+  return query<BillingPlan>(
+    `
     SELECT id, org_id AS orgId, name, display_name AS displayName,
            time_bank_hours AS timeBankHours, data_limit_mb AS dataLimitMb,
            cost, currency, fr_group_name AS frGroupName,
@@ -51,35 +57,52 @@ export async function listPlans(orgId: number, includeInactive = false): Promise
     FROM nx_billing_plans
     WHERE org_id = ? ${includeInactive ? '' : 'AND is_active = 1'}
     ORDER BY cost
-  `, [orgId])
+  `,
+    [orgId]
+  )
 }
 
 export async function getPlan(orgId: number, id: number): Promise<BillingPlan | null> {
-  return queryOne<BillingPlan>(`
+  return queryOne<BillingPlan>(
+    `
     SELECT id, org_id AS orgId, name, display_name AS displayName,
            time_bank_hours AS timeBankHours, data_limit_mb AS dataLimitMb,
            cost, currency, fr_group_name AS frGroupName,
            is_active AS isActive, created_at AS createdAt
     FROM nx_billing_plans
     WHERE id = ? AND org_id = ?
-  `, [id, orgId])
+  `,
+    [id, orgId]
+  )
 }
 
 export async function createPlan(input: CreatePlanInput): Promise<BillingPlan> {
-  const [result] = await query<{ insertId: number }>(`
+  const [result] = await query<{ insertId: number }>(
+    `
     INSERT INTO nx_billing_plans
       (org_id, name, display_name, time_bank_hours, data_limit_mb, cost, currency, fr_group_name)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `, [
-    input.orgId, input.name, input.displayName ?? null, input.timeBankHours,
-    input.dataLimitMb ?? null, input.cost, input.currency, input.frGroupName ?? null,
-  ])
+  `,
+    [
+      input.orgId,
+      input.name,
+      input.displayName ?? null,
+      input.timeBankHours,
+      input.dataLimitMb ?? null,
+      input.cost,
+      input.currency,
+      input.frGroupName ?? null,
+    ]
+  )
 
   // Sync to FreeRADIUS billing_plans table for daloRADIUS compat
-  await query(`
+  await query(
+    `
     INSERT IGNORE INTO billing_plans (planName, planCost, planCurrency, planTimeBank)
     VALUES (?, ?, ?, ?)
-  `, [input.name, input.cost, input.currency, input.timeBankHours])
+  `,
+    [input.name, input.cost, input.currency, input.timeBankHours]
+  )
 
   // Create FreeRADIUS group policy if frGroupName specified
   if (input.frGroupName) {
@@ -97,26 +120,50 @@ export async function updatePlan(
   const fields: string[] = []
   const values: unknown[] = []
 
-  if (updates.name !== undefined) { fields.push('name = ?'); values.push(updates.name) }
-  if (updates.displayName !== undefined) { fields.push('display_name = ?'); values.push(updates.displayName) }
-  if (updates.timeBankHours !== undefined) { fields.push('time_bank_hours = ?'); values.push(updates.timeBankHours) }
-  if (updates.dataLimitMb !== undefined) { fields.push('data_limit_mb = ?'); values.push(updates.dataLimitMb) }
-  if (updates.cost !== undefined) { fields.push('cost = ?'); values.push(updates.cost) }
-  if (updates.currency !== undefined) { fields.push('currency = ?'); values.push(updates.currency) }
-  if (updates.frGroupName !== undefined) { fields.push('fr_group_name = ?'); values.push(updates.frGroupName) }
+  if (updates.name !== undefined) {
+    fields.push('name = ?')
+    values.push(updates.name)
+  }
+  if (updates.displayName !== undefined) {
+    fields.push('display_name = ?')
+    values.push(updates.displayName)
+  }
+  if (updates.timeBankHours !== undefined) {
+    fields.push('time_bank_hours = ?')
+    values.push(updates.timeBankHours)
+  }
+  if (updates.dataLimitMb !== undefined) {
+    fields.push('data_limit_mb = ?')
+    values.push(updates.dataLimitMb)
+  }
+  if (updates.cost !== undefined) {
+    fields.push('cost = ?')
+    values.push(updates.cost)
+  }
+  if (updates.currency !== undefined) {
+    fields.push('currency = ?')
+    values.push(updates.currency)
+  }
+  if (updates.frGroupName !== undefined) {
+    fields.push('fr_group_name = ?')
+    values.push(updates.frGroupName)
+  }
 
   if (!fields.length) return getPlan(orgId, id)
 
   values.push(id, orgId)
-  await query(`UPDATE nx_billing_plans SET ${fields.join(', ')} WHERE id = ? AND org_id = ?`, values)
+  await query(
+    `UPDATE nx_billing_plans SET ${fields.join(', ')} WHERE id = ? AND org_id = ?`,
+    values
+  )
   return getPlan(orgId, id)
 }
 
 export async function togglePlanActive(orgId: number, id: number): Promise<BillingPlan | null> {
-  await query(
-    'UPDATE nx_billing_plans SET is_active = NOT is_active WHERE id = ? AND org_id = ?',
-    [id, orgId]
-  )
+  await query('UPDATE nx_billing_plans SET is_active = NOT is_active WHERE id = ? AND org_id = ?', [
+    id,
+    orgId,
+  ])
   return getPlan(orgId, id)
 }
 
@@ -136,25 +183,34 @@ async function syncFrGroupPolicy(
   await query('DELETE FROM radgroupreply WHERE groupname = ?', [groupName])
 
   // Time limit check
-  await query(`
+  await query(
+    `
     INSERT INTO radgroupcheck (groupname, attribute, op, value)
     VALUES (?, 'Max-All-Session', ':=', ?)
-  `, [groupName, String(totalSeconds)])
+  `,
+    [groupName, String(totalSeconds)]
+  )
 
   // Data limit reply (if set)
   if (dataLimitMb) {
     const bytes = dataLimitMb * 1048576
-    await query(`
+    await query(
+      `
       INSERT INTO radgroupreply (groupname, attribute, op, value)
       VALUES (?, 'ChilliSpot-Max-Total-Octets', ':=', ?)
-    `, [groupName, String(bytes)])
+    `,
+      [groupName, String(bytes)]
+    )
   }
 
   // Session timeout reply
-  await query(`
+  await query(
+    `
     INSERT INTO radgroupreply (groupname, attribute, op, value)
     VALUES (?, 'Session-Timeout', ':=', ?)
-  `, [groupName, String(totalSeconds)])
+  `,
+    [groupName, String(totalSeconds)]
+  )
 }
 ```
 
@@ -163,6 +219,7 @@ async function syncFrGroupPolicy(
 ## Task 7.2 — Full Plan Routes (replaces Sprint 5 stub)
 
 ### Update `packages/api/src/modules/plans/plan.routes.ts`:
+
 ```typescript
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
@@ -193,15 +250,11 @@ export async function planRoutes(app: FastifyInstance) {
     return plan
   })
 
-  app.post(
-    '/plans',
-    { preHandler: requireRole('orgadmin') },
-    async (req, reply) => {
-      const body = PlanSchema.parse(req.body)
-      const plan = await createPlan({ ...body, orgId: req.user!.orgId })
-      return reply.status(201).send(plan)
-    }
-  )
+  app.post('/plans', { preHandler: requireRole('orgadmin') }, async (req, reply) => {
+    const body = PlanSchema.parse(req.body)
+    const plan = await createPlan({ ...body, orgId: req.user!.orgId })
+    return reply.status(201).send(plan)
+  })
 
   app.patch<{ Params: { id: string } }>(
     '/plans/:id',
@@ -231,6 +284,7 @@ export async function planRoutes(app: FastifyInstance) {
 ## Task 7.3 — User Management Service (API)
 
 ### `packages/api/src/modules/users/user.service.ts`
+
 ```typescript
 import bcrypt from 'bcryptjs'
 import { query, queryOne } from '../../db/mysql.js'
@@ -249,24 +303,30 @@ export interface AppUser {
 }
 
 export async function listUsers(orgId: number): Promise<AppUser[]> {
-  return query<AppUser>(`
+  return query<AppUser>(
+    `
     SELECT id, org_id AS orgId, username, email, role,
            branch_ip AS branchIp, is_active AS isActive,
            last_login AS lastLogin, created_at AS createdAt
     FROM nx_users
     WHERE org_id = ?
     ORDER BY username
-  `, [orgId])
+  `,
+    [orgId]
+  )
 }
 
 export async function getUser(orgId: number, id: number): Promise<AppUser | null> {
-  return queryOne<AppUser>(`
+  return queryOne<AppUser>(
+    `
     SELECT id, org_id AS orgId, username, email, role,
            branch_ip AS branchIp, is_active AS isActive,
            last_login AS lastLogin, created_at AS createdAt
     FROM nx_users
     WHERE id = ? AND org_id = ?
-  `, [id, orgId])
+  `,
+    [id, orgId]
+  )
 }
 
 export async function createUser(opts: {
@@ -278,10 +338,13 @@ export async function createUser(opts: {
   branchIp?: string
 }): Promise<AppUser> {
   const hash = await bcrypt.hash(opts.password, 12)
-  const [result] = await query<{ insertId: number }>(`
+  const [result] = await query<{ insertId: number }>(
+    `
     INSERT INTO nx_users (org_id, username, email, password, role, branch_ip)
     VALUES (?, ?, ?, ?, ?, ?)
-  `, [opts.orgId, opts.username, opts.email ?? null, hash, opts.role, opts.branchIp ?? null])
+  `,
+    [opts.orgId, opts.username, opts.email ?? null, hash, opts.role, opts.branchIp ?? null]
+  )
   return getUser(opts.orgId, (result as any).insertId) as Promise<AppUser>
 }
 
@@ -299,10 +362,22 @@ export async function updateUser(
   const fields: string[] = []
   const values: unknown[] = []
 
-  if (updates.email !== undefined) { fields.push('email = ?'); values.push(updates.email) }
-  if (updates.role !== undefined) { fields.push('role = ?'); values.push(updates.role) }
-  if (updates.branchIp !== undefined) { fields.push('branch_ip = ?'); values.push(updates.branchIp) }
-  if (updates.isActive !== undefined) { fields.push('is_active = ?'); values.push(updates.isActive ? 1 : 0) }
+  if (updates.email !== undefined) {
+    fields.push('email = ?')
+    values.push(updates.email)
+  }
+  if (updates.role !== undefined) {
+    fields.push('role = ?')
+    values.push(updates.role)
+  }
+  if (updates.branchIp !== undefined) {
+    fields.push('branch_ip = ?')
+    values.push(updates.branchIp)
+  }
+  if (updates.isActive !== undefined) {
+    fields.push('is_active = ?')
+    values.push(updates.isActive ? 1 : 0)
+  }
   if (updates.password) {
     const hash = await bcrypt.hash(updates.password, 12)
     fields.push('password = ?')
@@ -326,6 +401,7 @@ export async function deleteUser(orgId: number, id: number): Promise<void> {
 ## Task 7.4 — User Routes (API)
 
 ### `packages/api/src/modules/users/user.routes.ts`
+
 ```typescript
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
@@ -335,7 +411,11 @@ import { listUsers, getUser, createUser, updateUser, deleteUser } from './user.s
 const UserRoleEnum = z.enum(['superadmin', 'orgadmin', 'branchmanager', 'operator', 'readonly'])
 
 const CreateUserSchema = z.object({
-  username: z.string().min(3).max(50).regex(/^[a-zA-Z0-9_-]+$/),
+  username: z
+    .string()
+    .min(3)
+    .max(50)
+    .regex(/^[a-zA-Z0-9_-]+$/),
   email: z.string().email().optional(),
   password: z.string().min(8),
   role: UserRoleEnum,
@@ -357,11 +437,15 @@ export async function userRoutes(app: FastifyInstance) {
     return listUsers(req.user!.orgId)
   })
 
-  app.get<{ Params: { id: string } }>('/users/:id', { preHandler: requireRole('orgadmin') }, async (req, reply) => {
-    const user = await getUser(req.user!.orgId, Number(req.params.id))
-    if (!user) return reply.status(404).send({ error: 'User not found' })
-    return user
-  })
+  app.get<{ Params: { id: string } }>(
+    '/users/:id',
+    { preHandler: requireRole('orgadmin') },
+    async (req, reply) => {
+      const user = await getUser(req.user!.orgId, Number(req.params.id))
+      if (!user) return reply.status(404).send({ error: 'User not found' })
+      return user
+    }
+  )
 
   app.post('/users', { preHandler: requireRole('orgadmin') }, async (req, reply) => {
     const body = CreateUserSchema.parse(req.body)
@@ -396,6 +480,7 @@ export async function userRoutes(app: FastifyInstance) {
 ```
 
 ### Register in `packages/api/src/app.ts`:
+
 ```typescript
 import { planRoutes } from './modules/plans/plan.routes.js'
 import { userRoutes } from './modules/users/user.routes.js'
@@ -408,10 +493,11 @@ await app.register(userRoutes, { prefix: '/api' })
 ## Task 7.5 — Session Kick (API)
 
 ### `packages/api/src/modules/sessions/session.routes.ts`
+
 ```typescript
 import type { FastifyInstance } from 'fastify'
 import { authenticate, requireRole } from '../auth/auth.middleware.js'
-import { query } from '../../db/mysql.js'
+import { query, queryOne } from '../../db/mysql.js'
 import { execSync } from 'child_process'
 
 export async function sessionRoutes(app: FastifyInstance) {
@@ -426,7 +512,8 @@ export async function sessionRoutes(app: FastifyInstance) {
       framedipaddress: string
       acctstarttime: string
       acctsessiontime: number
-    }>(`
+    }>(
+      `
       SELECT acctsessionid, username, nasipaddress, framedipaddress,
              acctstarttime, acctsessiontime
       FROM radacct
@@ -435,7 +522,9 @@ export async function sessionRoutes(app: FastifyInstance) {
           SELECT nas_ip FROM nx_branches WHERE org_id = ? AND is_active = 1
         )
       ORDER BY acctstarttime DESC
-    `, [req.user!.orgId])
+    `,
+      [req.user!.orgId]
+    )
   })
 
   // Disconnect a session via RADIUS CoA (Change of Authorization)
@@ -448,27 +537,42 @@ export async function sessionRoutes(app: FastifyInstance) {
         username: string
         nasipaddress: string
         acctsessionid: string
-      }>(`
+      }>(
+        `
         SELECT username, nasipaddress, acctsessionid
         FROM radacct
         WHERE acctsessionid = ? AND acctstoptime IS NULL
-      `, [req.params.sessionId])
+      `,
+        [req.params.sessionId]
+      )
 
       if (!session) return reply.status(404).send({ error: 'Session not found or already closed' })
 
+      // Look up the RADIUS secret for this NAS from the nas table
+      const nasRow = await queryOne<{ secret: string }>(
+        'SELECT secret FROM nas WHERE nasname = ?',
+        [session.nasipaddress]
+      )
+      const nasSecret = nasRow?.secret ?? ''
+
       try {
         // Mark session stopped in accounting (soft disconnect)
-        await query(`
+        await query(
+          `
           UPDATE radacct
           SET acctstoptime = NOW(), acctterminatecause = 'Admin-Reset'
           WHERE acctsessionid = ?
-        `, [req.params.sessionId])
-
-        // Attempt CoA via radclient if available
-        execSync(
-          `echo "User-Name = ${session.username}, Acct-Session-Id = ${req.params.sessionId}" | ` +
-          `radclient -x ${session.nasipaddress}:3799 disconnect testing123 2>/dev/null || true`
+        `,
+          [req.params.sessionId]
         )
+
+        // Attempt CoA disconnect via radclient using the branch's real RADIUS secret
+        if (nasSecret) {
+          execSync(
+            `echo "User-Name = ${session.username}, Acct-Session-Id = ${req.params.sessionId}" | ` +
+              `radclient -x ${session.nasipaddress}:3799 disconnect ${nasSecret} 2>/dev/null || true`
+          )
+        }
 
         return { success: true, message: `Session for ${session.username} disconnected` }
       } catch (e) {
@@ -480,6 +584,7 @@ export async function sessionRoutes(app: FastifyInstance) {
 ```
 
 ### Register in `packages/api/src/app.ts`:
+
 ```typescript
 import { sessionRoutes } from './modules/sessions/session.routes.js'
 await app.register(sessionRoutes, { prefix: '/api' })
@@ -490,6 +595,7 @@ await app.register(sessionRoutes, { prefix: '/api' })
 ## Task 7.6 — Audit Log Service (API)
 
 ### `packages/api/src/modules/audit/audit.service.ts`
+
 ```typescript
 import { query } from '../../db/mysql.js'
 import { redis } from '../../db/redis.js'
@@ -517,29 +623,35 @@ export async function logAudit(opts: {
   meta?: Record<string, unknown>
   ipAddress?: string
 }) {
-  await query(`
+  await query(
+    `
     INSERT INTO nx_audit_log (org_id, user_id, action, resource, resource_id, meta, ip_address)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `, [
-    opts.orgId ?? null,
-    opts.userId ?? null,
-    opts.action,
-    opts.resource ?? null,
-    opts.resourceId ?? null,
-    opts.meta ? JSON.stringify(opts.meta) : null,
-    opts.ipAddress ?? null,
-  ])
+  `,
+    [
+      opts.orgId ?? null,
+      opts.userId ?? null,
+      opts.action,
+      opts.resource ?? null,
+      opts.resourceId ?? null,
+      opts.meta ? JSON.stringify(opts.meta) : null,
+      opts.ipAddress ?? null,
+    ]
+  )
 }
 
-export async function getAuditLog(orgId: number, opts: {
-  page?: number
-  pageSize?: number
-  action?: string
-  userId?: number
-  resource?: string
-  dateFrom?: string
-  dateTo?: string
-}): Promise<{ entries: AuditEntry[]; total: number }> {
+export async function getAuditLog(
+  orgId: number,
+  opts: {
+    page?: number
+    pageSize?: number
+    action?: string
+    userId?: number
+    resource?: string
+    dateFrom?: string
+    dateTo?: string
+  }
+): Promise<{ entries: AuditEntry[]; total: number }> {
   const page = opts.page ?? 1
   const pageSize = Math.min(opts.pageSize ?? 50, 200)
   const offset = (page - 1) * pageSize
@@ -547,19 +659,38 @@ export async function getAuditLog(orgId: number, opts: {
   const conditions = ['al.org_id = ?']
   const params: unknown[] = [orgId]
 
-  if (opts.action) { conditions.push('al.action LIKE ?'); params.push(`%${opts.action}%`) }
-  if (opts.userId) { conditions.push('al.user_id = ?'); params.push(opts.userId) }
-  if (opts.resource) { conditions.push('al.resource = ?'); params.push(opts.resource) }
-  if (opts.dateFrom) { conditions.push('DATE(al.created_at) >= ?'); params.push(opts.dateFrom) }
-  if (opts.dateTo) { conditions.push('DATE(al.created_at) <= ?'); params.push(opts.dateTo) }
+  if (opts.action) {
+    conditions.push('al.action LIKE ?')
+    params.push(`%${opts.action}%`)
+  }
+  if (opts.userId) {
+    conditions.push('al.user_id = ?')
+    params.push(opts.userId)
+  }
+  if (opts.resource) {
+    conditions.push('al.resource = ?')
+    params.push(opts.resource)
+  }
+  if (opts.dateFrom) {
+    conditions.push('DATE(al.created_at) >= ?')
+    params.push(opts.dateFrom)
+  }
+  if (opts.dateTo) {
+    conditions.push('DATE(al.created_at) <= ?')
+    params.push(opts.dateTo)
+  }
 
   const where = conditions.join(' AND ')
 
-  const [countRow] = await query<{ total: number }>(`
+  const [countRow] = await query<{ total: number }>(
+    `
     SELECT COUNT(*) AS total FROM nx_audit_log al WHERE ${where}
-  `, params)
+  `,
+    params
+  )
 
-  const entries = await query<AuditEntry>(`
+  const entries = await query<AuditEntry>(
+    `
     SELECT al.id, al.org_id AS orgId, al.user_id AS userId, al.action,
            al.resource, al.resource_id AS resourceId, al.meta,
            al.ip_address AS ipAddress, al.created_at AS createdAt,
@@ -569,7 +700,9 @@ export async function getAuditLog(orgId: number, opts: {
     WHERE ${where}
     ORDER BY al.created_at DESC
     LIMIT ? OFFSET ?
-  `, [...params, pageSize, offset])
+  `,
+    [...params, pageSize, offset]
+  )
 
   return {
     entries: entries.map((e) => ({
@@ -582,6 +715,7 @@ export async function getAuditLog(orgId: number, opts: {
 ```
 
 ### `packages/api/src/modules/audit/audit.routes.ts`
+
 ```typescript
 import type { FastifyInstance } from 'fastify'
 import { authenticate, requireRole } from '../auth/auth.middleware.js'
@@ -606,12 +740,14 @@ export async function auditRoutes(app: FastifyInstance) {
 ```
 
 ### Register in `packages/api/src/app.ts`:
+
 ```typescript
 import { auditRoutes } from './modules/audit/audit.routes.js'
 await app.register(auditRoutes, { prefix: '/api' })
 ```
 
 ### Add audit hooks in key service functions (example in auth.service.ts after login):
+
 ```typescript
 import { logAudit } from '../audit/audit.service.js'
 // After successful login:
@@ -630,17 +766,18 @@ await logAudit({
 ## Task 7.7 — Frontend: Plans Page
 
 ### `packages/web/src/pages/Plans.tsx`
+
 ```tsx
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../lib/api'
-import { PageHeader } from '../components/PageHeader'
-import { DataTable } from '../components/DataTable'
-import { Button } from '../components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
-import { Input } from '../components/ui/input'
-import { Label } from '../components/ui/label'
-import { Switch } from '../components/ui/switch'
+import { api } from '@/lib/api'
+import { PageHeader } from '@/components/shared/PageHeader'
+import { DataTable } from '@/components/shared/DataTable'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { Plus, ToggleLeft } from 'lucide-react'
 import type { BillingPlan } from '@nexrad/shared'
 
@@ -660,34 +797,37 @@ export default function Plans() {
 
   const columns = [
     { key: 'name', header: 'Name' },
-    { key: 'displayName', header: 'Display Name', render: (v: string | null) => v ?? '—' },
-    { key: 'timeBankHours', header: 'Hours', render: (v: number) => `${v}h` },
+    { key: 'displayName', header: 'Display Name', cell: (r: BillingPlan) => r.displayName ?? '—' },
+    { key: 'timeBankHours', header: 'Hours', cell: (r: BillingPlan) => `${r.timeBankHours}h` },
     {
       key: 'dataLimitMb',
       header: 'Data Limit',
-      render: (v: number | null) => v ? `${v} MB` : 'Unlimited',
+      cell: (r: BillingPlan) => (r.dataLimitMb ? `${r.dataLimitMb} MB` : 'Unlimited'),
     },
     {
       key: 'cost',
       header: 'Price',
-      render: (v: number, r: BillingPlan) => `${r.currency} ${v.toFixed(2)}`,
+      cell: (r: BillingPlan) => `${r.currency} ${r.cost.toFixed(2)}`,
     },
     {
       key: 'frGroupName',
       header: 'FR Group',
-      render: (v: string | null) => v ? (
-        <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">{v}</span>
-      ) : '—',
+      cell: (r: BillingPlan) =>
+        r.frGroupName ? (
+          <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">{r.frGroupName}</span>
+        ) : (
+          '—'
+        ),
     },
     {
       key: 'isActive',
       header: 'Status',
-      render: (v: boolean, r: BillingPlan) => (
+      cell: (r: BillingPlan) => (
         <button
           onClick={() => toggleMutation.mutate(r.id)}
-          className={`${v ? 'badge-online' : 'badge-offline'} cursor-pointer hover:opacity-80`}
+          className={`${r.isActive ? 'badge-online' : 'badge-offline'} cursor-pointer hover:opacity-80`}
         >
-          {v ? 'Active' : 'Inactive'}
+          {r.isActive ? 'Active' : 'Inactive'}
         </button>
       ),
     },
@@ -706,10 +846,10 @@ export default function Plans() {
       />
       <DataTable
         data={plans}
-        columns={columns as any}
-        keyField="id"
+        columns={columns}
+        rowKey={(row) => row.id}
         loading={isLoading}
-        emptyMessage="No billing plans. Create your first plan to start generating tokens."
+        emptyText="No billing plans. Create your first plan to start generating tokens."
       />
       <AddPlanDialog
         open={showAdd}
@@ -723,26 +863,39 @@ export default function Plans() {
   )
 }
 
-function AddPlanDialog({ open, onClose, onCreated }: {
-  open: boolean; onClose: () => void; onCreated: () => void
+function AddPlanDialog({
+  open,
+  onClose,
+  onCreated,
+}: {
+  open: boolean
+  onClose: () => void
+  onCreated: () => void
 }) {
   const [form, setForm] = useState({
-    name: '', displayName: '', timeBankHours: 1, dataLimitMb: '',
-    cost: '', currency: 'USD', frGroupName: '',
+    name: '',
+    displayName: '',
+    timeBankHours: 1,
+    dataLimitMb: '',
+    cost: '',
+    currency: 'USD',
+    frGroupName: '',
   })
   const [error, setError] = useState<string | null>(null)
 
   const mutation = useMutation({
     mutationFn: (data: typeof form) =>
-      api.post('/plans', {
-        name: data.name,
-        displayName: data.displayName || undefined,
-        timeBankHours: Number(data.timeBankHours),
-        dataLimitMb: data.dataLimitMb ? Number(data.dataLimitMb) : undefined,
-        cost: Number(data.cost),
-        currency: data.currency,
-        frGroupName: data.frGroupName || undefined,
-      }).then((r) => r.data),
+      api
+        .post('/plans', {
+          name: data.name,
+          displayName: data.displayName || undefined,
+          timeBankHours: Number(data.timeBankHours),
+          dataLimitMb: data.dataLimitMb ? Number(data.dataLimitMb) : undefined,
+          cost: Number(data.cost),
+          currency: data.currency,
+          frGroupName: data.frGroupName || undefined,
+        })
+        .then((r) => r.data),
     onSuccess: onCreated,
     onError: (e: any) => setError(e.response?.data?.message ?? 'Failed to create plan'),
   })
@@ -750,49 +903,89 @@ function AddPlanDialog({ open, onClose, onCreated }: {
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>New Billing Plan</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>New Billing Plan</DialogTitle>
+        </DialogHeader>
         <div className="space-y-3 py-2">
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Plan Name *</Label>
-              <Input placeholder="1Hour" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+              <Input
+                placeholder="1Hour"
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              />
             </div>
             <div>
               <Label>Display Name</Label>
-              <Input placeholder="1 Hour WiFi" value={form.displayName} onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))} />
+              <Input
+                placeholder="1 Hour WiFi"
+                value={form.displayName}
+                onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))}
+              />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Time Bank (hours) *</Label>
-              <Input type="number" min={1} value={form.timeBankHours} onChange={(e) => setForm((f) => ({ ...f, timeBankHours: Number(e.target.value) }))} />
+              <Input
+                type="number"
+                min={1}
+                value={form.timeBankHours}
+                onChange={(e) => setForm((f) => ({ ...f, timeBankHours: Number(e.target.value) }))}
+              />
             </div>
             <div>
               <Label>Data Limit (MB)</Label>
-              <Input type="number" placeholder="Leave blank = unlimited" value={form.dataLimitMb} onChange={(e) => setForm((f) => ({ ...f, dataLimitMb: e.target.value }))} />
+              <Input
+                type="number"
+                placeholder="Leave blank = unlimited"
+                value={form.dataLimitMb}
+                onChange={(e) => setForm((f) => ({ ...f, dataLimitMb: e.target.value }))}
+              />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Price *</Label>
-              <Input type="number" step="0.01" placeholder="1.00" value={form.cost} onChange={(e) => setForm((f) => ({ ...f, cost: e.target.value }))} />
+              <Input
+                type="number"
+                step="0.01"
+                placeholder="1.00"
+                value={form.cost}
+                onChange={(e) => setForm((f) => ({ ...f, cost: e.target.value }))}
+              />
             </div>
             <div>
               <Label>Currency *</Label>
-              <Input placeholder="USD" maxLength={3} value={form.currency} onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value.toUpperCase() }))} />
+              <Input
+                placeholder="USD"
+                maxLength={3}
+                value={form.currency}
+                onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value.toUpperCase() }))}
+              />
             </div>
           </div>
           <div>
             <Label>FreeRADIUS Group Name</Label>
-            <Input placeholder="1hour-group" value={form.frGroupName} onChange={(e) => setForm((f) => ({ ...f, frGroupName: e.target.value }))} />
+            <Input
+              placeholder="1hour-group"
+              value={form.frGroupName}
+              onChange={(e) => setForm((f) => ({ ...f, frGroupName: e.target.value }))}
+            />
             <p className="text-xs text-muted-foreground mt-1">
               Creates radgroupcheck/radgroupreply policies automatically.
             </p>
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={onClose}>Cancel</Button>
-            <Button onClick={() => mutation.mutate(form)} disabled={mutation.isPending || !form.name || !form.cost}>
+            <Button variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => mutation.mutate(form)}
+              disabled={mutation.isPending || !form.name || !form.cost}
+            >
               {mutation.isPending ? 'Creating...' : 'Create Plan'}
             </Button>
           </div>
@@ -808,17 +1001,24 @@ function AddPlanDialog({ open, onClose, onCreated }: {
 ## Task 7.8 — Frontend: Users Page
 
 ### `packages/web/src/pages/Users.tsx`
+
 ```tsx
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../lib/api'
-import { PageHeader } from '../components/PageHeader'
-import { DataTable } from '../components/DataTable'
-import { Button } from '../components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
-import { Input } from '../components/ui/input'
-import { Label } from '../components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
+import { api } from '@/lib/api'
+import { PageHeader } from '@/components/shared/PageHeader'
+import { DataTable } from '@/components/shared/DataTable'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Plus, ShieldCheck, UserX } from 'lucide-react'
 
 const ROLES = ['orgadmin', 'branchmanager', 'operator', 'readonly'] as const
@@ -850,28 +1050,43 @@ export default function Users() {
   }
 
   const columns = [
-    { key: 'username', header: 'Username', render: (v: string) => <span className="font-medium">{v}</span> },
-    { key: 'email', header: 'Email', render: (v: string | null) => v ?? '—' },
-    { key: 'role', header: 'Role', render: roleBadge },
     {
-      key: 'isActive', header: 'Status',
-      render: (v: boolean) => v ? <span className="badge-online">Active</span> : <span className="badge-offline">Inactive</span>,
+      key: 'username',
+      header: 'Username',
+      cell: (row: any) => <span className="font-medium">{row.username}</span>,
+    },
+    { key: 'email', header: 'Email', cell: (row: any) => row.email ?? '—' },
+    { key: 'role', header: 'Role', cell: (row: any) => roleBadge(row.role) },
+    {
+      key: 'isActive',
+      header: 'Status',
+      cell: (row: any) =>
+        row.isActive ? (
+          <span className="badge-online">Active</span>
+        ) : (
+          <span className="badge-offline">Inactive</span>
+        ),
     },
     {
-      key: 'lastLogin', header: 'Last Login',
-      render: (v: string | null) => v ? new Date(v).toLocaleString() : 'Never',
+      key: 'lastLogin',
+      header: 'Last Login',
+      cell: (row: any) => (row.lastLogin ? new Date(row.lastLogin).toLocaleString() : 'Never'),
     },
     {
-      key: 'id', header: '',
-      render: (id: number, row: any) => (
+      key: 'id',
+      header: '',
+      cell: (row: any) => (
         <Button
-          variant="ghost" size="sm"
-          onClick={() => toggleMutation.mutate({ id, isActive: row.isActive })}
+          variant="ghost"
+          size="sm"
+          onClick={() => toggleMutation.mutate({ id: row.id, isActive: row.isActive })}
           title={row.isActive ? 'Deactivate user' : 'Activate user'}
         >
-          {row.isActive
-            ? <UserX className="h-4 w-4 text-destructive" />
-            : <ShieldCheck className="h-4 w-4 text-success" />}
+          {row.isActive ? (
+            <UserX className="h-4 w-4 text-destructive" />
+          ) : (
+            <ShieldCheck className="h-4 w-4 text-success" />
+          )}
         </Button>
       ),
     },
@@ -890,10 +1105,10 @@ export default function Users() {
       />
       <DataTable
         data={users}
-        columns={columns as any}
-        keyField="id"
+        columns={columns}
+        rowKey={(row) => row.id}
         loading={isLoading}
-        emptyMessage="No users found."
+        emptyText="No users found."
       />
       <AddUserDialog
         open={showAdd}
@@ -907,8 +1122,21 @@ export default function Users() {
   )
 }
 
-function AddUserDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
-  const [form, setForm] = useState({ username: '', email: '', password: '', role: 'operator' as string })
+function AddUserDialog({
+  open,
+  onClose,
+  onCreated,
+}: {
+  open: boolean
+  onClose: () => void
+  onCreated: () => void
+}) {
+  const [form, setForm] = useState({
+    username: '',
+    email: '',
+    password: '',
+    role: 'operator' as string,
+  })
   const [error, setError] = useState<string | null>(null)
 
   const mutation = useMutation({
@@ -920,33 +1148,60 @@ function AddUserDialog({ open, onClose, onCreated }: { open: boolean; onClose: (
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>Add User</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>Add User</DialogTitle>
+        </DialogHeader>
         <div className="space-y-3 py-2">
           <div>
             <Label>Username *</Label>
-            <Input placeholder="jsmith" value={form.username} onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))} />
+            <Input
+              placeholder="jsmith"
+              value={form.username}
+              onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
+            />
           </div>
           <div>
             <Label>Email</Label>
-            <Input type="email" placeholder="j@example.com" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
+            <Input
+              type="email"
+              placeholder="j@example.com"
+              value={form.email}
+              onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+            />
           </div>
           <div>
             <Label>Password *</Label>
-            <Input type="password" placeholder="Min 8 characters" value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} />
+            <Input
+              type="password"
+              placeholder="Min 8 characters"
+              value={form.password}
+              onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+            />
           </div>
           <div>
             <Label>Role *</Label>
             <Select value={form.role} onValueChange={(v) => setForm((f) => ({ ...f, role: v }))}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
-                {ROLES.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                {ROLES.map((r) => (
+                  <SelectItem key={r} value={r}>
+                    {r}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={onClose}>Cancel</Button>
-            <Button onClick={() => mutation.mutate(form)} disabled={mutation.isPending || !form.username || !form.password}>
+            <Button variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => mutation.mutate(form)}
+              disabled={mutation.isPending || !form.username || !form.password}
+            >
               {mutation.isPending ? 'Creating...' : 'Create User'}
             </Button>
           </div>
@@ -962,6 +1217,7 @@ function AddUserDialog({ open, onClose, onCreated }: { open: boolean; onClose: (
 ## Task 7.9 — Sidebar Nav: Add Plans, Users, Audit Links
 
 ### Update Sidebar navItems:
+
 ```typescript
 { href: '/plans', label: 'Plans', icon: CreditCard, roles: ['superadmin','orgadmin'] },
 { href: '/users', label: 'Users', icon: Users2, roles: ['superadmin','orgadmin'] },
@@ -969,6 +1225,7 @@ function AddUserDialog({ open, onClose, onCreated }: { open: boolean; onClose: (
 ```
 
 ### Add routes in `packages/web/src/App.tsx`:
+
 ```tsx
 import Plans from './pages/Plans'
 import Users from './pages/Users'
@@ -984,14 +1241,15 @@ import AuditLog from './pages/AuditLog'
 ## Task 7.10 — Frontend: Audit Log Page
 
 ### `packages/web/src/pages/AuditLog.tsx`
+
 ```tsx
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { api } from '../lib/api'
-import { PageHeader } from '../components/PageHeader'
-import { DataTable } from '../components/DataTable'
-import { Input } from '../components/ui/input'
-import { Label } from '../components/ui/label'
+import { api } from '@/lib/api'
+import { PageHeader } from '@/components/shared/PageHeader'
+import { DataTable } from '@/components/shared/DataTable'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 
 export default function AuditLog() {
   const [filter, setFilter] = useState({ action: '', resource: '' })
@@ -1004,17 +1262,21 @@ export default function AuditLog() {
 
   const columns = [
     {
-      key: 'createdAt', header: 'Time',
-      render: (v: string) => new Date(v).toLocaleString(),
+      key: 'createdAt',
+      header: 'Time',
+      cell: (row: any) => new Date(row.createdAt).toLocaleString(),
     },
-    { key: 'username', header: 'User', render: (v: string | null) => v ?? 'System' },
+    { key: 'username', header: 'User', cell: (row: any) => row.username ?? 'System' },
     {
-      key: 'action', header: 'Action',
-      render: (v: string) => <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">{v}</span>,
+      key: 'action',
+      header: 'Action',
+      cell: (row: any) => (
+        <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">{row.action}</span>
+      ),
     },
-    { key: 'resource', header: 'Resource', render: (v: string | null) => v ?? '—' },
-    { key: 'resourceId', header: 'Resource ID', render: (v: string | null) => v ?? '—' },
-    { key: 'ipAddress', header: 'IP', render: (v: string | null) => v ?? '—' },
+    { key: 'resource', header: 'Resource', cell: (row: any) => row.resource ?? '—' },
+    { key: 'resourceId', header: 'Resource ID', cell: (row: any) => row.resourceId ?? '—' },
+    { key: 'ipAddress', header: 'IP', cell: (row: any) => row.ipAddress ?? '—' },
   ]
 
   return (
@@ -1025,7 +1287,8 @@ export default function AuditLog() {
         <div>
           <Label className="text-xs mb-1 block">Filter by action</Label>
           <Input
-            className="w-44" placeholder="e.g. auth.login"
+            className="w-44"
+            placeholder="e.g. auth.login"
             value={filter.action}
             onChange={(e) => setFilter((f) => ({ ...f, action: e.target.value }))}
           />
@@ -1033,7 +1296,8 @@ export default function AuditLog() {
         <div>
           <Label className="text-xs mb-1 block">Resource</Label>
           <Input
-            className="w-32" placeholder="e.g. branch"
+            className="w-32"
+            placeholder="e.g. branch"
             value={filter.resource}
             onChange={(e) => setFilter((f) => ({ ...f, resource: e.target.value }))}
           />
@@ -1042,10 +1306,10 @@ export default function AuditLog() {
 
       <DataTable
         data={data?.entries ?? []}
-        columns={columns as any}
-        keyField="id"
+        columns={columns}
+        rowKey={(row) => row.id}
         loading={isLoading}
-        emptyMessage="No audit entries found."
+        emptyText="No audit entries found."
       />
     </div>
   )

@@ -1,11 +1,15 @@
 # Sprint 6 — Financial Reports & Commission Tracking
+
 **Duration:** 4 days | **Goal:** Full financial reporting — generated vs realized vs outstanding revenue, per-branch breakdown, org-level commission tracking, CSV and PDF export, and a live financial analytics view.
+
+> **AI ASSISTANT:** Before implementing this sprint, read `docs/GROUND_TRUTH.md` for canonical component APIs, import paths, and store names. Sprint docs may conflict — GROUND_TRUTH.md wins.
 
 > After this sprint: an orgadmin can see exactly how much money was generated, how much was actually collected (tokens used), what commission is owed, and export it all to PDF or CSV.
 
 ---
 
 ## Prerequisites
+
 - Sprint 0–5 sign-off checklists all ✓
 - Tokens exist in nx_tokens and userbillinfo
 - nx_billing_plans populated with at least one plan
@@ -15,6 +19,7 @@
 ## Task 6.1 — Financial Report Service (API)
 
 ### `packages/api/src/modules/reports/report.service.ts`
+
 ```typescript
 import { query } from '../../db/mysql.js'
 
@@ -27,8 +32,8 @@ export interface BranchReportRow {
   generatedCount: number
   usedCount: number
   unusedCount: number
-  generatedRevenue: number   // all tokens × cost
-  realizedRevenue: number    // used tokens × cost (actually earned)
+  generatedRevenue: number // all tokens × cost
+  realizedRevenue: number // used tokens × cost (actually earned)
   outstandingRevenue: number // unused tokens × cost (potential)
   usagePercent: number
 }
@@ -41,8 +46,8 @@ export interface ReportSummary {
   totalUsedTokens: number
   totalUnusedTokens: number
   commissionRate: number
-  commissionAmount: number   // realizedRevenue × commissionRate
-  netRevenue: number         // realizedRevenue − commissionAmount
+  commissionAmount: number // realizedRevenue × commissionRate
+  netRevenue: number // realizedRevenue − commissionAmount
   currency: string
 }
 
@@ -56,18 +61,18 @@ export interface FinancialReportResult {
 
 export interface ReportFilter {
   orgId: number
-  dateFrom: string  // YYYY-MM-DD
+  dateFrom: string // YYYY-MM-DD
   dateTo: string
   branchId?: number
   planId?: number
 }
 
-export async function generateFinancialReport(filter: ReportFilter): Promise<FinancialReportResult> {
+export async function generateFinancialReport(
+  filter: ReportFilter
+): Promise<FinancialReportResult> {
   const { orgId, dateFrom, dateTo } = filter
 
-  const conditions: string[] = [
-    'DATE(ubi.creationdate) BETWEEN ? AND ?',
-  ]
+  const conditions: string[] = ['DATE(ubi.creationdate) BETWEEN ? AND ?']
   const params: unknown[] = [dateFrom, dateTo]
 
   if (filter.branchId) {
@@ -99,7 +104,8 @@ export async function generateFinancialReport(filter: ReportFilter): Promise<Fin
     currency: string
     generatedCount: number
     usedCount: number
-  }>(`
+  }>(
+    `
     SELECT
       COALESCE(
         MIN(n.description),
@@ -125,14 +131,16 @@ export async function generateFinancialReport(filter: ReportFilter): Promise<Fin
     WHERE ${where}
     GROUP BY bp.planName, bp.planCost, bp.planCurrency, ubi.creationby
     ORDER BY branch, bp.planName
-  `, params)
+  `,
+    params
+  )
 
   // Fetch org commission rate
   const [org] = await query<{ commission_rate: number; currency: string }>(
     'SELECT commission_rate, currency FROM nx_organizations WHERE id = ?',
     [orgId]
   )
-  const commissionRate = Number(org?.commission_rate ?? 0.10)
+  const commissionRate = Number(org?.commission_rate ?? 0.1)
   const orgCurrency = org?.currency ?? 'USD'
 
   // Build enriched rows
@@ -197,7 +205,8 @@ export async function getSessionAnalytics(orgId: number, dateFrom: string, dateT
     avgDurationSeconds: number
     totalInputMb: number
     totalOutputMb: number
-  }>(`
+  }>(
+    `
     SELECT
       DATE(acctstarttime) AS date,
       COUNT(*) AS sessions,
@@ -212,7 +221,9 @@ export async function getSessionAnalytics(orgId: number, dateFrom: string, dateT
       )
     GROUP BY DATE(acctstarttime)
     ORDER BY date
-  `, [dateFrom, dateTo, orgId])
+  `,
+    [dateFrom, dateTo, orgId]
+  )
 }
 ```
 
@@ -221,6 +232,7 @@ export async function getSessionAnalytics(orgId: number, dateFrom: string, dateT
 ## Task 6.2 — Report Routes (API)
 
 ### `packages/api/src/modules/reports/report.routes.ts`
+
 ```typescript
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
@@ -255,7 +267,10 @@ export async function reportRoutes(app: FastifyInstance) {
       const pdf = await generateReportPdf(report)
       return reply
         .header('Content-Type', 'application/pdf')
-        .header('Content-Disposition', `attachment; filename="financial-report-${q.dateFrom}-${q.dateTo}.pdf"`)
+        .header(
+          'Content-Disposition',
+          `attachment; filename="financial-report-${q.dateFrom}-${q.dateTo}.pdf"`
+        )
         .send(Buffer.from(pdf))
     }
 
@@ -263,7 +278,10 @@ export async function reportRoutes(app: FastifyInstance) {
       const csv = generateReportCsv(report)
       return reply
         .header('Content-Type', 'text/csv')
-        .header('Content-Disposition', `attachment; filename="financial-report-${q.dateFrom}-${q.dateTo}.csv"`)
+        .header(
+          'Content-Disposition',
+          `attachment; filename="financial-report-${q.dateFrom}-${q.dateTo}.csv"`
+        )
         .send(csv)
     }
 
@@ -278,6 +296,7 @@ export async function reportRoutes(app: FastifyInstance) {
 ```
 
 ### Register in `packages/api/src/app.ts`:
+
 ```typescript
 import { reportRoutes } from './modules/reports/report.routes.js'
 await app.register(reportRoutes, { prefix: '/api' })
@@ -288,6 +307,7 @@ await app.register(reportRoutes, { prefix: '/api' })
 ## Task 6.3 — Report PDF Generator
 
 ### `packages/api/src/modules/reports/report.pdf.ts`
+
 ```typescript
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
 import type { FinancialReportResult } from './report.service.js'
@@ -303,7 +323,14 @@ export async function generateReportPdf(report: FinancialReportResult): Promise<
   let page = pdfDoc.addPage([A4_W, A4_H])
   let y = A4_H - MARGIN
 
-  const drawText = (text: string, x: number, yPos: number, size = 10, bold = false, color = rgb(0.1, 0.1, 0.1)) => {
+  const drawText = (
+    text: string,
+    x: number,
+    yPos: number,
+    size = 10,
+    bold = false,
+    color = rgb(0.1, 0.1, 0.1)
+  ) => {
     page.drawText(String(text), { x, y: yPos, size, font: bold ? boldFont : regularFont, color })
   }
 
@@ -319,9 +346,13 @@ export async function generateReportPdf(report: FinancialReportResult): Promise<
   const fmt = (n: number) => `${summary.currency} ${n.toFixed(2)}`
 
   page.drawRectangle({
-    x: MARGIN, y: y - 110, width: A4_W - MARGIN * 2, height: 105,
+    x: MARGIN,
+    y: y - 110,
+    width: A4_W - MARGIN * 2,
+    height: 105,
     color: rgb(0.97, 0.97, 0.97),
-    borderColor: rgb(0.85, 0.85, 0.85), borderWidth: 0.5,
+    borderColor: rgb(0.85, 0.85, 0.85),
+    borderWidth: 0.5,
   })
 
   drawText('SUMMARY', MARGIN + 10, y - 20, 10, true)
@@ -344,8 +375,14 @@ export async function generateReportPdf(report: FinancialReportResult): Promise<
   drawText(`Net Revenue:`, col2, y - 52, 9)
   drawText(fmt(summary.netRevenue), col2 + 120, y - 52, 9, true, rgb(0.1, 0.5, 0.1))
 
-  drawText(`Tokens: ${summary.totalGeneratedTokens} generated / ${summary.totalUsedTokens} used / ${summary.totalUnusedTokens} unused`,
-    col1, y - 100, 8, false, rgb(0.4, 0.4, 0.4))
+  drawText(
+    `Tokens: ${summary.totalGeneratedTokens} generated / ${summary.totalUsedTokens} used / ${summary.totalUnusedTokens} unused`,
+    col1,
+    y - 100,
+    8,
+    false,
+    rgb(0.4, 0.4, 0.4)
+  )
 
   y -= 125
 
@@ -354,7 +391,13 @@ export async function generateReportPdf(report: FinancialReportResult): Promise<
   const COL_HEADERS = ['Branch', 'Plan', 'Gen.', 'Used', 'Realized', 'Outstanding', 'Usage%']
   let xCursor = MARGIN
 
-  page.drawRectangle({ x: MARGIN, y: y - 18, width: A4_W - MARGIN * 2, height: 18, color: rgb(0.9, 0.92, 0.98) })
+  page.drawRectangle({
+    x: MARGIN,
+    y: y - 18,
+    width: A4_W - MARGIN * 2,
+    height: 18,
+    color: rgb(0.9, 0.92, 0.98),
+  })
   COL_HEADERS.forEach((h, i) => {
     drawText(h, xCursor + 3, y - 13, 8, true, rgb(0.25, 0.32, 0.71))
     xCursor += COL_WIDTHS[i]
@@ -386,7 +429,8 @@ export async function generateReportPdf(report: FinancialReportResult): Promise<
     page.drawLine({
       start: { x: MARGIN, y: y - 14 },
       end: { x: A4_W - MARGIN, y: y - 14 },
-      thickness: 0.2, color: rgb(0.88, 0.88, 0.88),
+      thickness: 0.2,
+      color: rgb(0.88, 0.88, 0.88),
     })
 
     y -= 16
@@ -394,10 +438,13 @@ export async function generateReportPdf(report: FinancialReportResult): Promise<
 
   // Footer
   const lastPage = pdfDoc.getPage(pdfDoc.getPageCount() - 1)
-  lastPage.drawText(
-    `Generated by NexRAD on ${new Date(report.generatedAt).toLocaleString()}`,
-    { x: MARGIN, y: 20, size: 7, font: regularFont, color: rgb(0.6, 0.6, 0.6) }
-  )
+  lastPage.drawText(`Generated by NexRAD on ${new Date(report.generatedAt).toLocaleString()}`, {
+    x: MARGIN,
+    y: 20,
+    size: 7,
+    font: regularFont,
+    color: rgb(0.6, 0.6, 0.6),
+  })
 
   return pdfDoc.save()
 }
@@ -408,6 +455,7 @@ export async function generateReportPdf(report: FinancialReportResult): Promise<
 ## Task 6.4 — Report CSV Generator
 
 ### `packages/api/src/modules/reports/report.csv.ts`
+
 ```typescript
 import type { FinancialReportResult } from './report.service.js'
 
@@ -423,28 +471,36 @@ export function generateReportCsv(report: FinancialReportResult): string {
 
   // Summary
   lines.push('"SUMMARY"')
-  lines.push(`"Generated Revenue","${summary.currency} ${summary.totalGeneratedRevenue.toFixed(2)}"`)
+  lines.push(
+    `"Generated Revenue","${summary.currency} ${summary.totalGeneratedRevenue.toFixed(2)}"`
+  )
   lines.push(`"Realized Revenue","${summary.currency} ${summary.totalRealizedRevenue.toFixed(2)}"`)
-  lines.push(`"Outstanding Revenue","${summary.currency} ${summary.totalOutstandingRevenue.toFixed(2)}"`)
+  lines.push(
+    `"Outstanding Revenue","${summary.currency} ${summary.totalOutstandingRevenue.toFixed(2)}"`
+  )
   lines.push(`"Commission Rate","${(summary.commissionRate * 100).toFixed(1)}%"`)
   lines.push(`"Commission Amount","${summary.currency} ${summary.commissionAmount.toFixed(2)}"`)
   lines.push(`"Net Revenue","${summary.currency} ${summary.netRevenue.toFixed(2)}"`)
   lines.push('')
 
   // Detail table
-  lines.push('"Branch","Plan","Cost","Generated","Used","Unused","Realized Revenue","Outstanding Revenue","Usage %"')
+  lines.push(
+    '"Branch","Plan","Cost","Generated","Used","Unused","Realized Revenue","Outstanding Revenue","Usage %"'
+  )
   for (const row of rows) {
-    lines.push([
-      `"${row.branch.replace(/"/g, '""')}"`,
-      `"${row.planName.replace(/"/g, '""')}"`,
-      `"${row.currency} ${row.planCost.toFixed(2)}"`,
-      row.generatedCount,
-      row.usedCount,
-      row.unusedCount,
-      `"${row.currency} ${row.realizedRevenue.toFixed(2)}"`,
-      `"${row.currency} ${row.outstandingRevenue.toFixed(2)}"`,
-      `"${row.usagePercent}%"`,
-    ].join(','))
+    lines.push(
+      [
+        `"${row.branch.replace(/"/g, '""')}"`,
+        `"${row.planName.replace(/"/g, '""')}"`,
+        `"${row.currency} ${row.planCost.toFixed(2)}"`,
+        row.generatedCount,
+        row.usedCount,
+        row.unusedCount,
+        `"${row.currency} ${row.realizedRevenue.toFixed(2)}"`,
+        `"${row.currency} ${row.outstandingRevenue.toFixed(2)}"`,
+        `"${row.usagePercent}%"`,
+      ].join(',')
+    )
   }
 
   return lines.join('\r\n')
@@ -456,22 +512,31 @@ export function generateReportCsv(report: FinancialReportResult): string {
 ## Task 6.5 — Frontend: Financial Reports Page
 
 ### `packages/web/src/pages/Reports.tsx`
+
 ```tsx
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { api } from '../lib/api'
-import { PageHeader } from '../components/PageHeader'
-import { StatCard } from '../components/StatCard'
-import { Button } from '../components/ui/button'
-import { Input } from '../components/ui/input'
-import { Label } from '../components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
-import { DataTable } from '../components/DataTable'
-import { formatCurrency } from '../lib/utils'
+import { api } from '@/lib/api'
+import { PageHeader } from '@/components/shared/PageHeader'
+import { StatCard } from '@/components/shared/StatCard'
+import { DataTable } from '@/components/shared/DataTable'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Download, FileText, TrendingUp, DollarSign, AlertCircle, Percent } from 'lucide-react'
 import type { FinancialReportResult, BranchReportRow } from '@nexrad/shared'
 
-interface Branch { id: number; name: string }
+interface Branch {
+  id: number
+  name: string
+}
 
 function getDefaultDates() {
   const now = new Date()
@@ -492,16 +557,22 @@ export default function Reports() {
     queryFn: () => api.get<Branch[]>('/branches').then((r) => r.data),
   })
 
-  const { data: report, isLoading, error } = useQuery({
+  const {
+    data: report,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ['report', activeFilter],
     queryFn: () =>
-      api.get<FinancialReportResult>('/reports/financial', {
-        params: {
-          dateFrom: activeFilter.dateFrom,
-          dateTo: activeFilter.dateTo,
-          branchId: activeFilter.branchId || undefined,
-        },
-      }).then((r) => r.data),
+      api
+        .get<FinancialReportResult>('/reports/financial', {
+          params: {
+            dateFrom: activeFilter.dateFrom,
+            dateTo: activeFilter.dateTo,
+            branchId: activeFilter.branchId || undefined,
+          },
+        })
+        .then((r) => r.data),
     enabled: !!activeFilter.dateFrom && !!activeFilter.dateTo,
   })
 
@@ -530,36 +601,44 @@ export default function Reports() {
   const columns = [
     { key: 'branch', header: 'Branch' },
     { key: 'planName', header: 'Plan' },
-    { key: 'planCost', header: 'Price', render: (v: number, r: BranchReportRow) => `${r.currency} ${v.toFixed(2)}` },
+    {
+      key: 'planCost',
+      header: 'Price',
+      cell: (r: BranchReportRow) => `${r.currency} ${r.planCost.toFixed(2)}`,
+    },
     { key: 'generatedCount', header: 'Generated' },
     { key: 'usedCount', header: 'Used' },
     { key: 'unusedCount', header: 'Unused' },
     {
       key: 'realizedRevenue',
       header: 'Realized',
-      render: (v: number, r: BranchReportRow) => (
-        <span className="text-success font-semibold">{r.currency} {v.toFixed(2)}</span>
+      cell: (r: BranchReportRow) => (
+        <span className="text-success font-semibold">
+          {r.currency} {r.realizedRevenue.toFixed(2)}
+        </span>
       ),
     },
     {
       key: 'outstandingRevenue',
       header: 'Outstanding',
-      render: (v: number, r: BranchReportRow) => (
-        <span className="text-warning">{r.currency} {v.toFixed(2)}</span>
+      cell: (r: BranchReportRow) => (
+        <span className="text-warning">
+          {r.currency} {r.outstandingRevenue.toFixed(2)}
+        </span>
       ),
     },
     {
       key: 'usagePercent',
       header: 'Usage',
-      render: (v: number) => (
+      cell: (r: BranchReportRow) => (
         <div className="flex items-center gap-2">
           <div className="w-16 bg-muted rounded-full h-1.5">
             <div
               className="bg-primary h-1.5 rounded-full"
-              style={{ width: `${v}%` }}
+              style={{ width: `${r.usagePercent}%` }}
             />
           </div>
-          <span className="text-xs">{v}%</span>
+          <span className="text-xs">{r.usagePercent}%</span>
         </div>
       ),
     },
@@ -614,14 +693,14 @@ export default function Reports() {
             <SelectContent>
               <SelectItem value="all">All branches</SelectItem>
               {branches.map((b) => (
-                <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>
+                <SelectItem key={b.id} value={String(b.id)}>
+                  {b.name}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
-        <Button onClick={() => setActiveFilter(filter)}>
-          Generate Report
-        </Button>
+        <Button onClick={() => setActiveFilter(filter)}>Generate Report</Button>
       </div>
 
       {/* Summary KPIs */}
@@ -629,32 +708,32 @@ export default function Reports() {
         <>
           <div className="kpi-grid">
             <StatCard
-              title="Realized Revenue"
+              label="Realized Revenue"
               value={`${summary.currency} ${summary.totalRealizedRevenue.toFixed(2)}`}
-              icon={<DollarSign className="h-5 w-5" />}
-              color="success"
-              subtitle="Tokens actually used"
+              icon={DollarSign}
+              colour="green"
+              sub="Tokens actually used"
             />
             <StatCard
-              title="Outstanding Revenue"
+              label="Outstanding Revenue"
               value={`${summary.currency} ${summary.totalOutstandingRevenue.toFixed(2)}`}
-              icon={<AlertCircle className="h-5 w-5" />}
-              color="warning"
-              subtitle="Unused tokens (potential)"
+              icon={AlertCircle}
+              colour="amber"
+              sub="Unused tokens (potential)"
             />
             <StatCard
-              title="Commission Due"
+              label="Commission Due"
               value={`${summary.currency} ${summary.commissionAmount.toFixed(2)}`}
-              icon={<Percent className="h-5 w-5" />}
-              color="default"
-              subtitle={`${(summary.commissionRate * 100).toFixed(0)}% of realized`}
+              icon={Percent}
+              colour="default"
+              sub={`${(summary.commissionRate * 100).toFixed(0)}% of realized`}
             />
             <StatCard
-              title="Net Revenue"
+              label="Net Revenue"
               value={`${summary.currency} ${summary.netRevenue.toFixed(2)}`}
-              icon={<TrendingUp className="h-5 w-5" />}
-              color="success"
-              subtitle="After commission"
+              icon={TrendingUp}
+              colour="green"
+              sub="After commission"
             />
           </div>
 
@@ -666,14 +745,21 @@ export default function Reports() {
               </div>
               <div>
                 <p className="font-semibold text-orange-900 dark:text-orange-100">
-                  Commission Summary — {(summary.commissionRate * 100).toFixed(0)}% on realized revenue
+                  Commission Summary — {(summary.commissionRate * 100).toFixed(0)}% on realized
+                  revenue
                 </p>
                 <p className="text-sm text-orange-700 dark:text-orange-300">
-                  {summary.currency} {summary.totalRealizedRevenue.toFixed(2)} realized
-                  × {(summary.commissionRate * 100).toFixed(0)}%
-                  = <strong>{summary.currency} {summary.commissionAmount.toFixed(2)}</strong> commission.
-                  &nbsp;Net to keep: <strong>{summary.currency} {summary.netRevenue.toFixed(2)}</strong>.
-                  &nbsp;Commission applies only to tokens that have been used — not generated tokens.
+                  {summary.currency} {summary.totalRealizedRevenue.toFixed(2)} realized ×{' '}
+                  {(summary.commissionRate * 100).toFixed(0)}% ={' '}
+                  <strong>
+                    {summary.currency} {summary.commissionAmount.toFixed(2)}
+                  </strong>{' '}
+                  commission. &nbsp;Net to keep:{' '}
+                  <strong>
+                    {summary.currency} {summary.netRevenue.toFixed(2)}
+                  </strong>
+                  . &nbsp;Commission applies only to tokens that have been used — not generated
+                  tokens.
                 </p>
               </div>
             </div>
@@ -684,10 +770,10 @@ export default function Reports() {
       {/* Detail Table */}
       <DataTable
         data={report?.rows ?? []}
-        columns={columns as any}
-        keyField="branchShortname"
+        columns={columns}
+        rowKey={(row) => `${row.branchShortname}-${row.planName}`}
         loading={isLoading}
-        emptyMessage={
+        emptyText={
           error
             ? 'Error loading report. Check date range and try again.'
             : 'Select a date range and click Generate Report.'
@@ -710,23 +796,33 @@ export default function Reports() {
 ## Task 6.6 — Session Analytics Chart Page
 
 ### Install recharts (already in package.json — verify):
+
 ```bash
 cd packages/web && pnpm ls recharts
 # Should show recharts listed. If not: pnpm add recharts
 ```
 
 ### `packages/web/src/pages/Analytics.tsx`
+
 ```tsx
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, BarChart, Bar, Legend,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  Legend,
 } from 'recharts'
-import { api } from '../lib/api'
-import { PageHeader } from '../components/PageHeader'
-import { StatCard } from '../components/StatCard'
-import { formatBytes } from '../lib/utils'
+import { api } from '@/lib/api'
+import { PageHeader } from '@/components/shared/PageHeader'
+import { StatCard } from '@/components/shared/StatCard'
+import { formatBytes } from '@/lib/utils'
 
 function getDefaultDates() {
   const now = new Date()
@@ -744,13 +840,14 @@ export default function Analytics() {
 
   const { data = [], isLoading } = useQuery({
     queryKey: ['session-analytics', dates],
-    queryFn: () =>
-      api.get('/reports/sessions', { params: dates }).then((r) => r.data as any[]),
+    queryFn: () => api.get('/reports/sessions', { params: dates }).then((r) => r.data as any[]),
   })
 
   const totalSessions = data.reduce((s, d) => s + Number(d.sessions), 0)
   const totalData = data.reduce((s, d) => s + Number(d.totalInputMb) + Number(d.totalOutputMb), 0)
-  const avgUsers = data.length ? Math.round(data.reduce((s, d) => s + Number(d.uniqueUsers), 0) / data.length) : 0
+  const avgUsers = data.length
+    ? Math.round(data.reduce((s, d) => s + Number(d.uniqueUsers), 0) / data.length)
+    : 0
 
   return (
     <div className="space-y-6">
@@ -778,7 +875,12 @@ export default function Analytics() {
       <div className="kpi-grid">
         <StatCard title="Total Sessions" value={totalSessions} color="info" loading={isLoading} />
         <StatCard title="Avg Users/Day" value={avgUsers} color="default" loading={isLoading} />
-        <StatCard title="Total Data" value={formatBytes(totalData * 1048576)} color="success" loading={isLoading} />
+        <StatCard
+          title="Total Data"
+          value={formatBytes(totalData * 1048576)}
+          color="success"
+          loading={isLoading}
+        />
       </div>
 
       {/* Sessions chart */}
@@ -842,8 +944,18 @@ export default function Analytics() {
               formatter={(v: number) => `${v.toFixed(1)} MB`}
             />
             <Legend />
-            <Bar dataKey="totalInputMb" name="Download (MB)" fill="hsl(var(--primary))" radius={[2, 2, 0, 0]} />
-            <Bar dataKey="totalOutputMb" name="Upload (MB)" fill="hsl(var(--success))" radius={[2, 2, 0, 0]} />
+            <Bar
+              dataKey="totalInputMb"
+              name="Download (MB)"
+              fill="hsl(var(--primary))"
+              radius={[2, 2, 0, 0]}
+            />
+            <Bar
+              dataKey="totalOutputMb"
+              name="Upload (MB)"
+              fill="hsl(var(--success))"
+              radius={[2, 2, 0, 0]}
+            />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -857,12 +969,14 @@ export default function Analytics() {
 ## Task 6.7 — Sidebar Nav: Add Reports & Analytics Links
 
 ### Update Sidebar navItems:
+
 ```typescript
 { href: '/reports', label: 'Reports', icon: BarChart2, roles: ['superadmin','orgadmin','branchmanager','readonly'] },
 { href: '/analytics', label: 'Analytics', icon: TrendingUp, roles: ['superadmin','orgadmin'] },
 ```
 
 ### Update `packages/web/src/App.tsx`:
+
 ```tsx
 import Reports from './pages/Reports'
 import Analytics from './pages/Analytics'
@@ -878,6 +992,7 @@ import Analytics from './pages/Analytics'
 ## Task 6.8 — Shared Report Types
 
 ### `packages/shared/src/types/report.types.ts` — verify/update:
+
 ```typescript
 export interface BranchReportRow {
   branch: string
@@ -921,6 +1036,7 @@ export interface FinancialReportResult {
 ## Task 6.9 — Integration Tests
 
 ### `packages/api/src/modules/reports/__tests__/report.test.ts`
+
 ```typescript
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { buildApp } from '../../../app.js'

@@ -1,11 +1,15 @@
 # Sprint 0 — Foundation & DevOps
+
 **Duration:** 3 days | **Goal:** Working monorepo, Docker dev environment, CI passing, lint clean, health check live.
+
+> **AI ASSISTANT:** Before implementing this sprint, read `docs/GROUND_TRUTH.md` for canonical component APIs, import paths, and store names. Sprint docs may conflict — GROUND_TRUTH.md wins.
 
 > This sprint produces zero user-visible features. It produces the scaffolding every subsequent sprint builds on. Do NOT skip any step — a broken foundation breaks every sprint after it.
 
 ---
 
 ## Prerequisites
+
 - Node.js ≥ 20 installed
 - pnpm ≥ 9 installed (`npm install -g pnpm`)
 - Docker + Docker Compose installed
@@ -23,6 +27,7 @@ git commit -m "chore: initial project scaffold"
 ```
 
 Create `.github/` branch protection:
+
 - Branch `main` requires PR + CI pass before merge
 - Branch `develop` is the integration branch
 
@@ -59,15 +64,13 @@ Verify: make a change with a lint error, attempt `git commit` — it should be b
 ## Task 0.4 — ESLint Configuration (API)
 
 Create `packages/api/.eslintrc.json`:
+
 ```json
 {
   "root": true,
   "parser": "@typescript-eslint/parser",
   "plugins": ["@typescript-eslint"],
-  "extends": [
-    "eslint:recommended",
-    "plugin:@typescript-eslint/recommended"
-  ],
+  "extends": ["eslint:recommended", "plugin:@typescript-eslint/recommended"],
   "env": { "node": true, "es2022": true },
   "rules": {
     "@typescript-eslint/no-explicit-any": "warn",
@@ -82,6 +85,7 @@ Create `packages/api/.eslintrc.json`:
 ## Task 0.5 — ESLint Configuration (Web)
 
 Create `packages/web/.eslintrc.json`:
+
 ```json
 {
   "root": true,
@@ -106,6 +110,7 @@ Create `packages/web/.eslintrc.json`:
 ## Task 0.6 — Prettier Configuration
 
 Create `.prettierrc` at repo root:
+
 ```json
 {
   "semi": false,
@@ -119,6 +124,7 @@ Create `.prettierrc` at repo root:
 ```
 
 Create `.prettierignore`:
+
 ```
 node_modules/
 dist/
@@ -130,6 +136,7 @@ dist/
 ## Task 0.7 — API Skeleton
 
 ### `packages/api/src/config.ts`
+
 ```typescript
 import 'dotenv/config'
 
@@ -138,67 +145,63 @@ export const config = {
   host: process.env.API_HOST || '0.0.0.0',
   nodeEnv: process.env.NODE_ENV || 'development',
   db: {
-    host:     process.env.DB_HOST     || 'localhost',
-    port:     Number(process.env.DB_PORT) || 3306,
-    user:     process.env.DB_USER     || 'radius',
+    host: process.env.DB_HOST || 'localhost',
+    port: Number(process.env.DB_PORT) || 3306,
+    user: process.env.DB_USER || 'radius',
     password: process.env.DB_PASSWORD || 'radiusPassword',
-    database: process.env.DB_NAME     || 'radius',
+    database: process.env.DB_NAME || 'radius',
   },
   redis: {
     url: process.env.REDIS_URL || 'redis://localhost:6379',
   },
   jwt: {
-    secret:              process.env.JWT_SECRET || 'dev-secret',
-    expiresIn:           process.env.JWT_EXPIRES_IN || '15m',
-    refreshSecret:       process.env.REFRESH_TOKEN_SECRET || 'dev-refresh',
-    refreshExpiresIn:    process.env.REFRESH_TOKEN_EXPIRES_IN || '7d',
+    secret: process.env.JWT_SECRET || 'dev-secret',
+    expiresIn: process.env.JWT_EXPIRES_IN || '15m',
+    refreshSecret: process.env.REFRESH_TOKEN_SECRET || 'dev-refresh',
+    refreshExpiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '7d',
   },
   wg: {
-    interface:   process.env.WG_INTERFACE   || 'wg0',
-    configPath:  process.env.WG_CONFIG_PATH || '/etc/wireguard/wg0.conf',
-    serverIp:    process.env.WG_SERVER_IP   || '10.8.0.1',
-    subnet:      process.env.WG_SUBNET      || '10.8.0.0/24',
-    endpoint:    process.env.WG_SERVER_ENDPOINT || '',
-    port:        Number(process.env.WG_PORT) || 51820,
+    interface: process.env.WG_INTERFACE || 'wg0',
+    configPath: process.env.WG_CONFIG_PATH || '/etc/wireguard/wg0.conf',
+    serverIp: process.env.WG_SERVER_IP || '10.8.0.1',
+    subnet: process.env.WG_SUBNET || '10.8.0.0/24',
+    endpoint: process.env.WG_SERVER_ENDPOINT || '',
+    port: Number(process.env.WG_PORT) || 51820,
   },
 } as const
 ```
 
 ### `packages/api/src/db/mysql.ts`
+
 ```typescript
 import mysql from 'mysql2/promise'
 import { config } from '../config.js'
 
 export const pool = mysql.createPool({
-  host:            config.db.host,
-  port:            config.db.port,
-  user:            config.db.user,
-  password:        config.db.password,
-  database:        config.db.database,
+  host: config.db.host,
+  port: config.db.port,
+  user: config.db.user,
+  password: config.db.password,
+  database: config.db.database,
   waitForConnections: true,
   connectionLimit: 20,
-  queueLimit:      0,
-  timezone:        'Z',
+  queueLimit: 0,
+  timezone: 'Z',
 })
 
-export async function query<T = unknown>(
-  sql: string,
-  params?: unknown[]
-): Promise<T[]> {
+export async function query<T = unknown>(sql: string, params?: unknown[]): Promise<T[]> {
   const [rows] = await pool.execute(sql, params)
   return rows as T[]
 }
 
-export async function queryOne<T = unknown>(
-  sql: string,
-  params?: unknown[]
-): Promise<T | null> {
+export async function queryOne<T = unknown>(sql: string, params?: unknown[]): Promise<T | null> {
   const rows = await query<T>(sql, params)
   return rows[0] ?? null
 }
 ```
 
 ### `packages/api/src/db/redis.ts`
+
 ```typescript
 import { createClient } from 'redis'
 import { config } from '../config.js'
@@ -214,6 +217,7 @@ export async function connectRedis() {
 ```
 
 ### `packages/api/src/app.ts`
+
 ```typescript
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
@@ -249,6 +253,7 @@ export async function buildApp() {
 ```
 
 ### `packages/api/src/server.ts`
+
 ```typescript
 import { buildApp } from './app.js'
 import { connectRedis } from './db/redis.js'
@@ -280,6 +285,7 @@ start()
 ## Task 0.8 — Web Skeleton
 
 ### `packages/web/src/main.tsx`
+
 ```tsx
 import React from 'react'
 import ReactDOM from 'react-dom/client'
@@ -294,6 +300,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 ```
 
 ### `packages/web/src/App.tsx`
+
 ```tsx
 export default function App() {
   return (
@@ -309,6 +316,7 @@ export default function App() {
 ```
 
 ### `packages/web/index.html`
+
 ```html
 <!DOCTYPE html>
 <html lang="en" class="dark">
@@ -348,6 +356,7 @@ curl http://localhost:5173
 ## Task 0.10 — Scripts
 
 ### `scripts/setup.sh`
+
 ```bash
 #!/usr/bin/env bash
 set -e
@@ -358,6 +367,7 @@ echo "Setup complete. Run: pnpm docker:dev"
 ```
 
 ### `scripts/migrate.sh`
+
 ```bash
 #!/usr/bin/env bash
 set -e

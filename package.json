@@ -26,8 +26,9 @@
     "turbo": "^2.3.3"
   },
   "lint-staged": {
-    "*.{ts,tsx}": ["eslint --fix", "prettier --write"],
-    "*.{json,md,yaml,yml}": ["prettier --write"]
+    "*.{ts,tsx,json,md,yaml,yml}": [
+      "prettier --write"
+    ]
   },
   "engines": {
     "node": ">=20.0.0",
