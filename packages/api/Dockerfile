@@ -17,6 +17,9 @@ COPY packages/api/tsconfig.json ./packages/api/
 
 RUN pnpm --filter @nexrad/api build
 
+# Create standalone prod deploy: workspace deps bundled, no dev deps
+RUN pnpm deploy --filter @nexrad/api --prod /prod
+
 # ── Development ──────────────────────────────────────────
 FROM base AS development
 WORKDIR /app
@@ -26,9 +29,6 @@ COPY packages/api ./packages/api
 COPY packages/shared ./packages/shared
 EXPOSE 3000
 CMD ["pnpm", "--filter", "@nexrad/api", "dev"]
-
-# Create standalone prod deploy: workspace deps bundled, no dev deps
-RUN pnpm deploy --filter @nexrad/api --prod /prod
 
 # ── Production ───────────────────────────────────────────
 FROM node:20-alpine AS production
