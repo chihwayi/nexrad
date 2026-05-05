@@ -10,6 +10,9 @@ declare module 'fastify' {
 }
 
 export async function authenticate(req: FastifyRequest, reply: FastifyReply) {
+  // Allow routes that explicitly opt out (e.g. register-peer callback)
+  if ((req.routeOptions as { config?: { skipAuth?: boolean } })?.config?.skipAuth) return
+
   const auth = req.headers.authorization
   if (!auth?.startsWith('Bearer ')) {
     return reply.code(401).send({ success: false, error: 'Unauthorized' })
@@ -24,8 +27,10 @@ export async function authenticate(req: FastifyRequest, reply: FastifyReply) {
 
 export function requireRole(...roles: UserRole[]) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
-    await authenticate(req, reply)
-    if (reply.sent) return
+    if (!req.user) {
+      await authenticate(req, reply)
+      if (reply.sent) return
+    }
     if (!roles.includes(req.user.role)) {
       return reply.code(403).send({ success: false, error: 'Insufficient permissions' })
     }

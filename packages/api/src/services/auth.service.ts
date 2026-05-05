@@ -15,6 +15,7 @@ interface DbUser {
   role: string
   branch_ip: string | null
   is_active: number
+  org_is_active: number | null
 }
 interface DbOrg {
   slug: string
@@ -31,16 +32,21 @@ interface DbRefreshRow {
   role: string
   branch_ip: string | null
   is_active: number
+  org_is_active: number | null
 }
 
 export class AuthService {
   async login(username: string, password: string): Promise<LoginResponse> {
     const user = await queryOne<DbUser>(
-      `SELECT id, org_id, username, email, password, role, branch_ip, is_active
-       FROM nx_users WHERE username = ? LIMIT 1`,
+      `SELECT u.id, u.org_id, u.username, u.email, u.password, u.role, u.branch_ip, u.is_active,
+              o.is_active AS org_is_active
+       FROM nx_users u
+       LEFT JOIN nx_organizations o ON o.id = u.org_id
+       WHERE u.username = ? LIMIT 1`,
       [username]
     )
     if (!user || !user.is_active) throw new Error('Invalid credentials')
+    if (user.org_id && !user.org_is_active) throw new Error('Organization suspended')
 
     const valid = await bcrypt.compare(password, user.password)
     if (!valid) throw new Error('Invalid credentials')
@@ -72,8 +78,10 @@ export class AuthService {
     const row = await queryOne<DbRefreshRow>(
       `SELECT rt.id, rt.user_id, rt.expires_at, rt.revoked,
               u.id as uid, u.org_id, u.username, u.email, u.role,
-              u.branch_ip, u.is_active
-       FROM nx_refresh_tokens rt JOIN nx_users u ON u.id = rt.user_id
+              u.branch_ip, u.is_active, o.is_active AS org_is_active
+       FROM nx_refresh_tokens rt
+       JOIN nx_users u ON u.id = rt.user_id
+       LEFT JOIN nx_organizations o ON o.id = u.org_id
        WHERE rt.token_hash = ? LIMIT 1`,
       [hash]
     )
@@ -81,6 +89,7 @@ export class AuthService {
       throw new Error('Invalid or expired refresh token')
     }
     if (!row.is_active) throw new Error('Account disabled')
+    if (row.org_id && !row.org_is_active) throw new Error('Organization suspended')
 
     const authUser: AuthUser = {
       id: row.uid,
@@ -133,3 +142,23 @@ export class AuthService {
 }
 
 export const authService = new AuthService()
+
+export function verifyAccessToken(token: string): AuthUser {
+  const payload = jwt.verify(token, config.jwt.secret) as unknown as {
+    sub: number
+    username: string
+    role: UserRole
+    orgId: number | null
+    branchIp: string | null
+  }
+
+  return {
+    id: payload.sub,
+    username: payload.username,
+    role: payload.role,
+    orgId: payload.orgId,
+    branchIp: payload.branchIp,
+    email: null,
+    orgSlug: null,
+  }
+}

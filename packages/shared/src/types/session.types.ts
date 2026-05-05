@@ -40,7 +40,7 @@ export interface WsSessionEnded {
   dataUsed: number
 }
 
-export interface WsStatsUpdate {
+export interface WsLiveStatsUpdate {
   activeSessions: number
   byBranch: SessionsByBranch
   realizedRevenue: number

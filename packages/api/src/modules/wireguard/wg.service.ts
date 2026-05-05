@@ -1,0 +1,352 @@
+import { execSync } from 'child_process'
+import { appendFileSync } from 'fs'
+import { query } from '../../db/mysql.js'
+import { config } from '../../config.js'
+
+export interface WgActivePeer {
+  publicKey: string
+  endpoint: string | null
+  lastHandshake: string | null
+  rxBytes: number
+  txBytes: number
+  allowedIps: string
+}
+
+/**
+ * Assign the next available tunnel IP in the WireGuard subnet.
+ * Reserves 10.8.0.1 for server, starts allocating from 10.8.0.2.
+ */
+export async function allocateTunnelIp(): Promise<string> {
+  const [subnetBase] = config.wg.subnet.split('/')
+  const parts = subnetBase.split('.').map(Number)
+
+  const existing = await query<{ tunnel_ip: string }>(
+    'SELECT tunnel_ip FROM nx_branches WHERE tunnel_ip IS NOT NULL AND org_id IS NOT NULL ORDER BY tunnel_ip'
+  )
+  const usedLast = new Set(existing.map((r) => Number(r.tunnel_ip.split('.')[3])))
+
+  for (let i = 2; i < 254; i++) {
+    if (!usedLast.has(i)) {
+      return `${parts[0]}.${parts[1]}.${parts[2]}.${i}`
+    }
+  }
+  throw new Error('No tunnel IPs available in subnet')
+}
+
+/**
+ * Build the [Peer] stanza to append to /etc/wireguard/wg0.conf on the server.
+ * No Endpoint= — MikroTik initiates the tunnel (supports Starlink/dynamic IP).
+ * No PresharedKey — matches deployment guide and keeps the provisioning script simple.
+ */
+export function buildServerPeerStanza(opts: {
+  publicKey: string
+  tunnelIp: string
+  branchName: string
+}): string {
+  return `
+# Branch: ${opts.branchName}
+[Peer]
+PublicKey = ${opts.publicKey}
+AllowedIPs = ${opts.tunnelIp}/32
+PersistentKeepalive = 25
+`
+}
+
+/**
+ * Add a peer to the live WireGuard interface without restarting it.
+ * Also appends the stanza to wg0.conf so it survives a server reboot.
+ */
+export async function addWgPeer(opts: {
+  publicKey: string
+  tunnelIp: string
+  branchName: string
+}): Promise<void> {
+  // Add to live interface
+  execSync(
+    `wg set ${config.wg.interface} peer ${opts.publicKey} allowed-ips ${opts.tunnelIp}/32 persistent-keepalive 25`
+  )
+
+  // Persist to conf file
+  const stanza = buildServerPeerStanza(opts)
+  appendFileSync(config.wg.configPath, stanza, 'utf8')
+}
+
+/**
+ * Remove a peer from the live WireGuard interface.
+ * Does NOT edit wg0.conf — the stanza stays in conf but is harmless once the peer is gone.
+ * To clean the conf file, redeploy or edit manually.
+ */
+export function removeWgPeer(publicKey: string): void {
+  try {
+    execSync(`wg set ${config.wg.interface} peer ${publicKey} remove`)
+  } catch {
+    // peer may not exist in live interface — non-fatal
+  }
+}
+
+/**
+ * Parse `wg show <iface> dump` output into structured peer data.
+ */
+export function parseWgDump(dump: string): WgActivePeer[] {
+  const lines = dump.trim().split('\n').slice(1) // skip server's own line
+  return lines
+    .filter((l) => l.trim())
+    .map((line) => {
+      const [pubkey, , endpoint, allowedIps, lastHandshake, rxBytes, txBytes] = line.split('\t')
+      return {
+        publicKey: pubkey,
+        endpoint: endpoint === '(none)' ? null : endpoint,
+        lastHandshake:
+          !lastHandshake || lastHandshake === '0'
+            ? null
+            : new Date(Number(lastHandshake) * 1000).toISOString(),
+        rxBytes: Number(rxBytes ?? 0),
+        txBytes: Number(txBytes ?? 0),
+        allowedIps,
+      }
+    })
+}
+
+export function getWgStatus(): WgActivePeer[] {
+  try {
+    const dump = execSync(`wg show ${config.wg.interface} dump 2>/dev/null`).toString()
+    return parseWgDump(dump)
+  } catch {
+    return []
+  }
+}
+
+export function getServerPublicKey(): string {
+  try {
+    return execSync(`wg show ${config.wg.interface} public-key 2>/dev/null`).toString().trim()
+  } catch {
+    return config.wg.serverPublicKey
+  }
+}
+
+/**
+ * Build a complete MikroTik RouterOS provisioning script (.rsc).
+ *
+ * The script is imported via WinBox (drag-drop to Files → /import filename.rsc).
+ * The MikroTik generates its own WireGuard keypair — the private key never leaves the device.
+ * At the end the script POSTs the public key back to NexRAD to complete peer registration.
+ *
+ * The script handles both PATH A (blank slate, e.g. after Netinstall) and
+ * PATH B (existing bridge, e.g. after /system reset-configuration skip-backup=yes).
+ */
+export function buildRouterOSScript(opts: {
+  branchShortname: string
+  branchName: string
+  tunnelIp: string // e.g. 10.8.0.2
+  radiusSecret: string
+  serverPublicKey: string
+  serverEndpoint: string // e.g. 173.212.195.88
+  serverPort: number // 51820
+  serverRadiusIp: string // e.g. 10.8.0.1
+  registrationToken: string
+  apiBaseUrl: string // e.g. http://173.212.195.88
+}): string {
+  const {
+    branchShortname,
+    branchName,
+    tunnelIp,
+    radiusSecret,
+    serverPublicKey,
+    serverEndpoint,
+    serverPort,
+    serverRadiusIp,
+    registrationToken,
+    apiBaseUrl,
+  } = opts
+
+  return `# =============================================================
+# NexRAD RouterOS Provisioning Script
+# Branch : ${branchName}
+# Tunnel : ${tunnelIp}
+# Generated by NexRAD — import via WinBox Files tab
+# =============================================================
+#
+# BEFORE IMPORTING:
+#   1. Plug Starlink into ether1
+#   2. Connect your laptop to ether2 (or any non-ether1 port)
+#   3. Factory reset if previously used:
+#      /system reset-configuration skip-backup=yes
+#      Wait 3 min, reconnect via WinBox Neighbors tab
+#   4. Drag this file to WinBox Files panel
+#   5. In terminal: /import ${branchShortname}-provision.rsc
+#
+# You will lose WinBox briefly when your port joins the hotspot bridge.
+# WinBox Neighbors tab will find the router again at 10.10.10.1.
+# =============================================================
+
+# 1 — Router Identity
+/system identity set name="${branchShortname}"
+
+# 2 — WiFi (2.4GHz, open network — captive portal controls access)
+/interface wireless set wlan1 \\
+  mode=ap-bridge \\
+  ssid="ZimSmartVillages" \\
+  band=2ghz-b/g/n \\
+  channel-width=20/40mhz-Ce \\
+  frequency=auto \\
+  country=zimbabwe \\
+  installation=indoor \\
+  disabled=no
+/interface wireless security-profiles set [ find default=yes ] mode=none authentication-types=""
+/interface wireless set wlan1 security-profile=default
+
+# 3 — Bridge, IP, DHCP
+/interface bridge add name=bridge-hotspot comment="Hotspot Network"
+/ip address add address=10.10.10.1/24 interface=bridge-hotspot comment="Hotspot Gateway"
+/ip pool add name=hotspot-pool ranges=10.10.10.10-10.10.10.254
+/ip dhcp-server network add \\
+  address=10.10.10.0/24 gateway=10.10.10.1 dns-server=1.1.1.1,8.8.8.8
+/ip dhcp-server add \\
+  name=hotspot-dhcp interface=bridge-hotspot address-pool=hotspot-pool \\
+  disabled=no lease-time=1h
+/interface bridge port add interface=wlan1 bridge=bridge-hotspot
+:foreach i in={2;3;4;5} do={
+  :local ifname ("ether" . $i)
+  :do { /interface bridge port remove [find interface=$ifname] } on-error={}
+  :do { /interface bridge port add interface=$ifname bridge=bridge-hotspot } on-error={}
+}
+:do { /interface bridge remove [find name!=bridge-hotspot] } on-error={}
+:do { /ip address remove [find interface=bridge] } on-error={}
+:do { /ip address remove [find interface=bridge1] } on-error={}
+:do { /ip address remove [find invalid] } on-error={}
+:do { /ip dhcp-server remove [find interface!=bridge-hotspot] } on-error={}
+:do { /ip dhcp-client remove [find interface=bridge] } on-error={}
+:do { /ip dhcp-client remove [find interface=bridge1] } on-error={}
+
+# 4 — Internet via Starlink on ether1
+:if ([:len [/ip dhcp-client find interface=ether1]] = 0) do={
+  /ip dhcp-client add interface=ether1 disabled=no \\
+    use-peer-dns=yes use-peer-ntp=yes add-default-route=yes comment="Starlink WAN"
+}
+
+# 5 — Firewall & NAT
+/ip firewall filter remove [find]
+/ip firewall nat remove [find]
+/ip firewall mangle remove [find]
+/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade \\
+  comment="Masquerade to WAN"
+/ip firewall filter add chain=input connection-state=established,related action=accept \\
+  comment="Allow established input"
+/ip firewall filter add chain=input protocol=icmp action=accept \\
+  comment="Allow ICMP"
+/ip firewall filter add chain=input in-interface=bridge-hotspot action=accept \\
+  comment="Allow from LAN"
+/ip firewall filter add chain=forward connection-state=established,related \\
+  action=fasttrack-connection comment="FastTrack for speed"
+/ip firewall filter add chain=forward connection-state=established,related action=accept \\
+  comment="Allow established forward"
+/ip firewall filter add chain=forward in-interface=bridge-hotspot out-interface=ether1 \\
+  action=accept comment="Hotspot to Internet"
+/ip firewall filter add chain=forward connection-state=invalid action=drop \\
+  comment="Drop invalid"
+/ip firewall filter add chain=input action=drop \\
+  comment="Drop all other input"
+/ip firewall mangle add chain=forward protocol=tcp tcp-flags=syn \\
+  action=change-mss new-mss=1340 comment="Optimize VPN MTU"
+
+# 6 — Hotspot (Persistent Sessions)
+/ip hotspot profile add \\
+  name=custom-hotspot \\
+  login-by=http-pap,cookie \\
+  use-radius=yes \\
+  radius-accounting=yes \\
+  radius-interim-update=5m \\
+  html-directory="" \\
+  http-proxy=0.0.0.0:0
+/ip hotspot user profile add \\
+  name=default-hotspot \\
+  shared-users=unlimited \\
+  rate-limit="" \\
+  keepalive-timeout=none \\
+  idle-timeout=none \\
+  session-timeout=0 \\
+  transparent-proxy=no \\
+  add-mac-cookie=yes
+/ip hotspot add \\
+  name=hotspot1 \\
+  interface=bridge-hotspot \\
+  address-pool=hotspot-pool \\
+  profile=custom-hotspot \\
+  addresses-per-mac=2 \\
+  keepalive-timeout=none \\
+  idle-timeout=none
+/ip hotspot enable hotspot1
+
+# 7 — WireGuard VPN
+/interface wireguard add name=wg-radius listen-port=51821 mtu=1380
+/ip address add address=${tunnelIp}/24 interface=wg-radius comment="WireGuard VPN"
+/interface wireguard peers add \\
+  interface=wg-radius \\
+  comment="RADIUS Server" \\
+  public-key="${serverPublicKey}" \\
+  endpoint-address=${serverEndpoint} \\
+  endpoint-port=${serverPort} \\
+  allowed-address=${serverRadiusIp}/32 \\
+  persistent-keepalive=25s
+
+# 8 — RADIUS (authenticates over WireGuard tunnel)
+/radius add \\
+  address=${serverRadiusIp} \\
+  secret=${radiusSecret} \\
+  service=hotspot,login \\
+  timeout=3s \\
+  comment="RADIUS via WireGuard"
+
+# 9 — Clock & NTP
+/system clock set time-zone-name=Africa/Harare
+/system ntp client set enabled=yes servers=pool.ntp.org
+
+# 10 — Security hardening
+/ip service set telnet disabled=yes
+/ip service set ftp disabled=yes
+/ip service set www address=10.10.10.0/24,10.8.0.0/24
+/ip service set ssh address=10.10.10.0/24,10.8.0.0/24
+/ip service set winbox address=0.0.0.0/0
+/ip service set api disabled=yes
+/ip service set api-ssl disabled=yes
+/ip neighbor discovery-settings set discover-interface-list=none
+/tool mac-server set allowed-interface-list=none
+/tool mac-server mac-winbox set allowed-interface-list=none
+/interface list add name=LAN-only comment="Local management only"
+/interface list member add interface=bridge-hotspot list=LAN-only
+/tool mac-server set allowed-interface-list=LAN-only
+/tool mac-server mac-winbox set allowed-interface-list=LAN-only
+
+# 11 — Self-register WireGuard public key with NexRAD
+:delay 5s
+:local wgPubKey [/interface wireguard get wg-radius public-key]
+:local regBody ("{\\"token\\":\\"${registrationToken}\\",\\"publicKey\\":\\"" . $wgPubKey . "\\"}")
+:put ""
+:put ">>> Registering WireGuard peer with NexRAD..."
+:do {
+  /tool fetch \\
+    url="${apiBaseUrl}/api/branches/register-peer" \\
+    http-method=post \\
+    http-header-field="Content-Type: application/json" \\
+    http-data=$regBody \\
+    output=user \\
+    duration=15s
+  :put ">>> Peer registered. WireGuard tunnel activating."
+} on-error={
+  :put ">>> Auto-registration failed (check internet on ether1)."
+  :put ">>> Give this public key to your NexRAD admin to activate manually:"
+  :put $wgPubKey
+  :put ">>> Manual activation: NexRAD → Branches → Activate → paste key above"
+}
+
+# 12 — Clear stale connections and save backup
+/ip firewall connection remove [find]
+/system backup save name=${branchShortname}-initial
+
+:put ""
+:put "=== NexRAD provisioning complete for ${branchName} ==="
+:put "WiFi: ZimSmartVillages is broadcasting"
+:put "VPN : tunnel to ${serverEndpoint} activating (allow 30s)"
+:put "Test: connect phone to ZimSmartVillages, open http://google.com"
+`
+}

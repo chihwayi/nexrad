@@ -1,4 +1,4 @@
-export type BranchStatus = 'online' | 'recent' | 'inactive' | 'never'
+export type BranchStatus = 'online' | 'recent' | 'inactive' | 'pending'
 
 export interface Branch {
   id: number
@@ -7,39 +7,18 @@ export interface Branch {
   shortname: string
   name: string
   location: string | null
-  wgPubkey: string | null
-  wgEndpoint: string | null
+  wgPubkey: string | null // null until MikroTik self-registers
+  tunnelIp: string | null
+  radiusSecret: string // shown in the Provision dialog
   isActive: boolean
-  status: BranchStatus
-  lastSeen: string | null
   createdAt: string
+  updatedAt: string
+  status?: BranchStatus
   activeSessions?: number
-  todaySessions?: number
-  totalRevenue?: number
 }
 
-export interface CreateBranchRequest {
+export interface CreateBranchDto {
   name: string
+  shortname: string
   location?: string
-  wgPubkey?: string
-}
-
-export interface BranchStats {
-  live: number
-  today: number
-  yesterday: number
-  total: number
-  uniqueTokens: number
-  revenue: number
-  lastSeen: string | null
-}
-
-export interface WireGuardPeerConfig {
-  branchIp: string
-  privateKey: string
-  publicKey: string
-  serverPublicKey: string
-  serverEndpoint: string
-  configText: string
-  qrDataUrl: string
 }

@@ -1,49 +1,41 @@
 export interface Token {
   id: number
+  orgId: number
   username: string
-  planName: string
-  planCost: number
-  currency: string
-  createdBy: string
-  branchName: string | null
-  batchId: string | null
+  branchId: number | null
+  planId: number | null
   prefix: string | null
-  createdAt: string
-  expiresAt: string | null
-  isUsed: boolean
-  sessionCount: number
-  firstUse: string | null
-  lastUse: string | null
-}
-
-export interface GenerateTokensRequest {
-  planId: number
-  quantity: number
-  prefix: string
-  branchIp?: string
-  expiresInDays?: number
-  notes?: string
-}
-
-export interface GenerateTokensResponse {
   batchId: string
-  tokens: GeneratedToken[]
+  createdBy: number | null
+  expiresAt: string | null
+  notes: string | null
+  createdAt: string
+  // Joined fields
+  planName?: string
+  planCost?: number
+  branchName?: string
+  isUsed?: boolean
+  sessionStart?: string | null
+}
+
+export interface GenerateTokensInput {
+  orgId: number
+  planId: number
+  branchId?: number
   count: number
+  prefix?: string
+  expiresAt?: string
+  notes?: string
+  createdBy: number
 }
 
-export interface GeneratedToken {
-  username: string
-  password: string
-  planName: string
-  planCost: number
-  currency: string
-}
-
-export interface TokenFilters {
-  status?: 'used' | 'unused' | 'expired'
-  branchIp?: string
+export interface TokenListFilter {
+  orgId: number
+  branchId?: number
   planId?: number
+  status?: 'used' | 'unused' | 'all'
+  search?: string
   batchId?: string
-  dateFrom?: string
-  dateTo?: string
+  page?: number
+  pageSize?: number
 }

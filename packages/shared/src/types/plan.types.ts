@@ -7,6 +7,7 @@ export interface BillingPlan {
   dataLimitMb: number | null
   cost: number
   currency: string
+  frGroupName: string | null
   isActive: boolean
   createdAt: string
   tokenCount?: number
@@ -19,4 +20,5 @@ export interface CreatePlanRequest {
   dataLimitMb?: number
   cost: number
   currency: string
+  frGroupName?: string
 }

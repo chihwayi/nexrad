@@ -1,54 +1,35 @@
-export interface FinancialReport {
-  period: { from: string; to: string }
-  commissionRate: number
-  totals: ReportTotals
-  byPackage: PackageRow[]
-  byBranch: BranchRow[]
-}
-
-export interface ReportTotals {
-  tokensGenerated: number
-  tokensUsed: number
-  tokensUnused: number
-  usagePercent: number
-  generatedRevenue: number
-  realizedRevenue: number
-  outstandingRevenue: number
-  commission: number
-  netRevenue: number
-}
-
-export interface PackageRow {
+export interface BranchReportRow {
+  branch: string
+  branchShortname: string
   planName: string
   planCost: number
   currency: string
-  branch: string
-  tokensGenerated: number
-  tokensUsed: number
-  tokensUnused: number
-  usagePercent: number
+  generatedCount: number
+  usedCount: number
+  unusedCount: number
+  generatedRevenue: number
   realizedRevenue: number
   outstandingRevenue: number
-  commission: number
-  netRevenue: number
-}
-
-export interface BranchRow {
-  branch: string
-  nasIp: string
-  tokensGenerated: number
-  tokensUsed: number
-  tokensUnused: number
   usagePercent: number
-  realizedRevenue: number
-  outstandingRevenue: number
-  commission: number
-  netRevenue: number
 }
 
-export interface ReportFilters {
-  from: string
-  to: string
-  branchIp?: string
-  planId?: number
+export interface ReportSummary {
+  totalGeneratedRevenue: number
+  totalRealizedRevenue: number
+  totalOutstandingRevenue: number
+  totalGeneratedTokens: number
+  totalUsedTokens: number
+  totalUnusedTokens: number
+  commissionRate: number
+  commissionAmount: number
+  netRevenue: number
+  currency: string
+}
+
+export interface FinancialReportResult {
+  rows: BranchReportRow[]
+  summary: ReportSummary
+  dateFrom: string
+  dateTo: string
+  generatedAt: string
 }

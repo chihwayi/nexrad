@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils'
 
 const pageTitles: Record<string, string> = {
   '/dashboard': 'Dashboard',
+  '/quick': 'Quick Token',
   '/sessions': 'Live Sessions',
   '/branches': 'Branches',
   '/tokens': 'Tokens',
@@ -23,11 +24,12 @@ const pageTitles: Record<string, string> = {
   '/audit': 'Audit Log',
   '/users': 'Users',
   '/organizations': 'Organizations',
+  '/tenants': 'Tenants',
   '/settings': 'Settings',
 }
 
 export function TopBar() {
-  const { toggleSidebar, setTheme, theme } = useUi()
+  const { sidebarOpen, setSidebarOpen, setTheme, theme } = useUi()
   const location = useLocation()
   const title = pageTitles[location.pathname] ?? 'NexRAD'
 
@@ -43,8 +45,8 @@ export function TopBar() {
         <Tooltip>
           <TooltipTrigger asChild>
             <button
-              onClick={toggleSidebar}
-              className="p-2 rounded-lg hover:bg-muted transition-colors lg:hidden"
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="p-2 rounded-lg hover:bg-muted transition-colors md:hidden"
               aria-label="Toggle sidebar"
             >
               <Menu size={18} />

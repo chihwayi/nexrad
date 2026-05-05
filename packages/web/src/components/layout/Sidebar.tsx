@@ -8,14 +8,17 @@ import {
   Ticket,
   Activity,
   BarChart2,
-  Package,
-  Users,
   Shield,
   Settings,
   LogOut,
   ChevronLeft,
   Network,
-  FileText,
+  CreditCard,
+  Users2,
+  ClipboardList,
+  TrendingUp,
+  Zap,
+  Building2,
 } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
@@ -23,21 +26,40 @@ interface NavItem {
   href: string
   label: string
   icon: React.ElementType
+  roles?: string[]
   superadminOnly?: boolean
 }
 
 const navItems: NavItem[] = [
-  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/quick', label: 'Quick Token', icon: Zap, roles: ['operator', 'branchmanager'] },
+  {
+    href: '/dashboard',
+    label: 'Dashboard',
+    icon: LayoutDashboard,
+    roles: ['superadmin', 'orgadmin', 'branchmanager', 'operator', 'readonly'],
+  },
   { href: '/sessions', label: 'Live Sessions', icon: Activity },
   { href: '/branches', label: 'Branches', icon: GitBranch },
-  { href: '/tokens', label: 'Tokens', icon: Ticket },
-  { href: '/reports', label: 'Reports', icon: BarChart2 },
-  { href: '/plans', label: 'Plans', icon: Package },
+  {
+    href: '/tokens',
+    label: 'Tokens',
+    icon: Ticket,
+    roles: ['superadmin', 'orgadmin', 'branchmanager', 'operator'],
+  },
+  {
+    href: '/reports',
+    label: 'Reports',
+    icon: BarChart2,
+    roles: ['superadmin', 'orgadmin', 'branchmanager', 'readonly'],
+  },
+  { href: '/analytics', label: 'Analytics', icon: TrendingUp, roles: ['superadmin', 'orgadmin'] },
+  { href: '/plans', label: 'Plans', icon: CreditCard, roles: ['superadmin', 'orgadmin'] },
+  { href: '/users', label: 'Users', icon: Users2, roles: ['superadmin', 'orgadmin'] },
+  { href: '/audit', label: 'Audit Log', icon: ClipboardList, roles: ['superadmin', 'orgadmin'] },
+  { href: '/tenants', label: 'Tenants', icon: Building2, roles: ['superadmin'] },
   { href: '/wireguard', label: 'WireGuard', icon: Network },
-  { href: '/audit', label: 'Audit Log', icon: FileText },
-  { href: '/users', label: 'Users', icon: Users },
   { href: '/organizations', label: 'Orgs', icon: Shield, superadminOnly: true },
-  { href: '/settings', label: 'Settings', icon: Settings },
+  { href: '/settings', label: 'Settings', icon: Settings, roles: ['superadmin', 'orgadmin'] },
 ]
 
 const roleLabel: Record<string, string> = {
@@ -102,10 +124,14 @@ export function Sidebar() {
   const { sidebarOpen, toggleSidebar, setSidebarOpen } = useUi()
   const navigate = useNavigate()
 
-  const visible = navItems.filter((item) => !item.superadminOnly || user?.role === 'superadmin')
+  const visible = navItems.filter((item) => {
+    if (item.superadminOnly && user?.role !== 'superadmin') return false
+    if (item.roles && !item.roles.includes(user?.role ?? '')) return false
+    return true
+  })
 
   const handleNavClick = () => {
-    if (window.innerWidth < 1024) setSidebarOpen(false)
+    if (window.innerWidth < 768) setSidebarOpen(false)
   }
 
   const handleLogout = () => {

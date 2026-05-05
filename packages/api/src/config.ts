@@ -14,6 +14,13 @@ export const config = {
   redis: {
     url: process.env.REDIS_URL || 'redis://localhost:6379',
   },
+  smtp: {
+    host: process.env.SMTP_HOST || '',
+    port: Number(process.env.SMTP_PORT) || 587,
+    user: process.env.SMTP_USER || '',
+    password: process.env.SMTP_PASSWORD || '',
+    from: process.env.SMTP_FROM || 'noreply@nexrad.app',
+  },
   jwt: {
     secret: process.env.JWT_SECRET || 'dev-secret',
     expiresIn: process.env.JWT_EXPIRES_IN || '15m',
@@ -27,5 +34,7 @@ export const config = {
     subnet: process.env.WG_SUBNET || '10.8.0.0/24',
     endpoint: process.env.WG_SERVER_ENDPOINT || '',
     port: Number(process.env.WG_PORT) || 51820,
+    serverPublicKey: process.env.WG_SERVER_PUBLIC_KEY || '',
   },
+  apiBaseUrl: process.env.API_BASE_URL || `http://${process.env.WG_SERVER_ENDPOINT || 'localhost'}`,
 } as const

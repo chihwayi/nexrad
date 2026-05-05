@@ -3,12 +3,17 @@ import { Sidebar } from './Sidebar'
 import { TopBar } from './TopBar'
 import { useUi } from '@/stores/ui.store'
 import { cn } from '@/lib/utils'
+import { InstallBanner } from '@/components/InstallBanner'
+import { OfflineBanner } from '@/components/OfflineBanner'
+import { UpdateBanner } from '@/components/UpdateBanner'
+import { ErrorBoundary } from '@/components/shared/ErrorBoundary'
 
 export default function AppShell() {
   const { sidebarOpen, setSidebarOpen } = useUi()
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
+    <div className="app-shell flex h-screen overflow-hidden bg-background">
+      <OfflineBanner />
       <Sidebar />
 
       {/* Mobile overlay */}
@@ -29,10 +34,14 @@ export default function AppShell() {
         <TopBar />
         <main className="flex-1 overflow-y-auto scrollbar-thin">
           <div className="px-4 py-5 sm:px-6 sm:py-6 max-w-screen-2xl mx-auto animate-fade-in">
-            <Outlet />
+            <ErrorBoundary>
+              <Outlet />
+            </ErrorBoundary>
           </div>
         </main>
       </div>
+      <InstallBanner />
+      <UpdateBanner />
     </div>
   )
 }

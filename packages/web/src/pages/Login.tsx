@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/stores/auth.store'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 
 export default function Login() {
   const [username, setUsername] = useState('')
@@ -41,46 +44,39 @@ export default function Login() {
           onSubmit={handleSubmit}
           className="bg-card border border-border rounded-xl p-6 space-y-4 shadow-card"
         >
-          {error && <div className="badge-error rounded-lg px-3 py-2 text-sm">{error}</div>}
+          {error && (
+            <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
+              {error}
+            </div>
+          )}
           <div className="space-y-2">
-            <label className="text-sm font-medium">Username</label>
-            <input
+            <Label htmlFor="username">Username</Label>
+            <Input
+              id="username"
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm
-                         focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
               placeholder="Enter username"
               autoComplete="username"
               required
             />
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium">Password</label>
-            <input
+            <Label htmlFor="password">Password</Label>
+            <Input
+              id="password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm
-                         focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
               placeholder="Enter password"
               autoComplete="current-password"
               required
             />
           </div>
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold
-                       hover:bg-primary/90 disabled:opacity-50 transition-colors"
-          >
+          <Button type="submit" className="w-full" loading={loading}>
             {loading ? 'Signing in…' : 'Sign in'}
-          </button>
+          </Button>
         </form>
-
-        <p className="text-center text-xs text-muted-foreground">
-          NexRAD — Open Source RADIUS Management
-        </p>
       </div>
     </div>
   )
