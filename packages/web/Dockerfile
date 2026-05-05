@@ -21,12 +21,22 @@ COPY packages/web/tsconfig.json      ./packages/web/
 COPY packages/web/components.json    ./packages/web/
 
 # public/ is optional — only copy if it exists
-COPY packages/web/public ./packages/web/public
+COPY packages/web/publi[c] ./packages/web/public/
 
 ARG VITE_API_URL
 ARG VITE_WS_URL
 ARG VITE_APP_NAME=NexRAD
 RUN pnpm --filter @nexrad/web build
+
+# ── Development ──────────────────────────────────────────
+FROM base AS development
+WORKDIR /app
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/packages/web/node_modules ./packages/web/node_modules
+COPY packages/web ./packages/web
+COPY packages/shared ./packages/shared
+EXPOSE 5173
+CMD ["pnpm", "--filter", "@nexrad/web", "dev"]
 
 # ── Production (served by nginx) ─────────────────────────
 FROM nginx:alpine AS production

@@ -16,8 +16,8 @@ services:
 
   api:
     build:
-      context: ./packages/api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: packages/api/Dockerfile
       target: production
     environment:
       NODE_ENV: production
@@ -46,8 +46,8 @@ services:
 
   web_builder:
     build:
-      context: ./packages/web
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: packages/web/Dockerfile
       target: builder
     volumes:
       - web_dist:/app/dist
