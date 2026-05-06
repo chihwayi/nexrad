@@ -11,7 +11,7 @@ const VoucherQuerySchema = z.object({
   branchId: z.string().optional(),
   status: z.enum(['used', 'unused', 'all']).default('unused'),
   showPrice: z.string().default('true'),
-  limit: z.string().default('50'),
+  limit: z.string().default('120'),
 })
 
 export async function voucherRoutes(app: FastifyInstance) {

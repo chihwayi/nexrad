@@ -57,7 +57,7 @@ export default function Tokens() {
   })
 
   const printVouchers = (batchId?: string) => {
-    const params = new URLSearchParams({ status: 'unused', limit: '50' })
+    const params = new URLSearchParams({ status: 'unused', limit: '500' })
     if (batchId) params.set('batchId', batchId)
     if (filter.branchId) params.set('branchId', filter.branchId)
     if (filter.planId) params.set('planId', filter.planId)
